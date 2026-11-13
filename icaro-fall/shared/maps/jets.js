@@ -17,6 +17,7 @@ const rings = [
   { id: 2, r0: 43, r1: 50, sinkAt: 50 },
 ];
 const START_R = 47;
+export const TOWER_R = 1.0; // raio da torre central (sólida)
 export const SINK_WARN = 8; // s de aviso antes de afundar
 export const SINK_TIME = 4; // s para afundar por completo
 const SINK_DEPTH = 2.5;
@@ -111,7 +112,7 @@ export const jetsMap = {
   killY: 0.1,
   waterY: 0,
   podium, rings, grates, jets, jetAngle, jetOmega, jetSpan, ringState,
-  FLOOR_Y, LOW_BAND, HIGH_BAND, JET_RADIUS, START_R, SINK_WARN, SINK_TIME,
+  FLOOR_Y, LOW_BAND, HIGH_BAND, JET_RADIUS, START_R, TOWER_R, SINK_WARN, SINK_TIME,
 
   spawn(i, n = 16) {
     const a = (i / n) * TAU + 0.35;
@@ -138,9 +139,12 @@ export const jetsMap = {
   },
 
   affect(b, world) {
+    let r = Math.hypot(b.x, b.z);
+    if (r < TOWER_R) { // torre central é sólida: ninguém se esconde no eixo dos jatos
+      if (r < 1e-3) { b.x = TOWER_R; b.z = 0; } else { b.x *= TOWER_R / r; b.z *= TOWER_R / r; }
+      r = TOWER_R;
+    }
     if (b.hitCd > 0) return;
-    const r = Math.hypot(b.x, b.z);
-    if (r < 0.3) return;
     const th = Math.atan2(b.z, b.x);
     const y0 = b.y - FLOOR_Y;
     const y1 = y0 + (b.state === 'dive' || b.state === 'slide' ? PLAYER.LOW_HEIGHT : PLAYER.HEIGHT);
@@ -166,6 +170,6 @@ export const jetsMap = {
 
   finished() { return false; },
   /** Proximidade do centro (0..1) — desempate se o tempo acabar com mais de um de pé. */
-  progress(b) { return clamp(1 - (Math.hypot(b.x, b.z) - podium.r) / (START_R - podium.r), 0, 1); },
+  progress(b) { return clamp(1 - Math.hypot(b.x, b.z) / START_R, 0, 1); },
   respawn(b) { b.fell = true; },
 };

@@ -150,8 +150,6 @@ export class Room {
     const t = (now - R.startAt) / 1000;
     if (t < 0) return; // contagem regressiva: todos parados na largada
     const b = e.body;
-    // distância percorrida (desempate da arena), acumulada no servidor; saltos absurdos não contam
-    b.dist += Math.min(Math.hypot(p[0] - b.x, p[2] - b.z), 3);
     b.x = p[0]; b.y = p[1]; b.z = p[2]; b.vx = p[3]; b.vy = p[4]; b.vz = p[5]; b.yaw = p[6];
     b.state = STATES[st]; b.grounded = st === 0 || st === 3;
     e.flags = msg.f & FLAG.STUN ? FLAG.STUN : 0;
@@ -213,7 +211,7 @@ export class Room {
     const final = index >= maps.length - 1;
     const R = this.round = {
       index, map, final, parts, n,
-      cap: final ? 1 : Math.max(1, Math.ceil(n / 2)), // igual a qualifyCap(), mas respeita cfg.maps
+      cap: capFor(map, n), // mesma regra de qualifyCap(), mas respeitando cfg.maps
       timeLimit: this.cfg.timeLimit ?? map.timeLimit,
       startAt: now + this.cfg.introMs,
       simT: 0, // tempo de rodada já simulado para os bots
@@ -293,7 +291,7 @@ export class Room {
     this.broadcast({ t: 'status', id: e.id, status, place });
   }
 
-  /** Corrida: cruzou a chegada. Colocação = ordem de chegada. */
+  /** Corrida: cruzou a chegada. Colocação = ordem de chegada; a rodada acaba quando as vagas enchem. */
   qualify(e, now) {
     const R = this.round;
     this.setStatus(e, 'qualified', ++R.qualified);
@@ -309,8 +307,8 @@ export class Room {
     else if (this.active().length === 0) this.endRound(now);
   }
 
-  /** Sobrevivência: acaba quando vivos <= vagas. As eliminações são processadas uma a uma, então em
-   *  quedas simultâneas os últimos registrados ficam com as vagas (nunca sobram menos vivos que vagas). */
+  /** Sobrevivência: só acaba antes do tempo quando vivos <= cap (map.minAlive). As eliminações são
+   *  processadas uma a uma, então se todos caírem juntos os últimos registrados ficam vivos até completar `cap`. */
   checkSurvivors(now) {
     const R = this.round;
     if (this.phase === 'round' && R.map.mode === 'survival' && this.active().length <= R.cap) this.endRound(now);
@@ -322,14 +320,15 @@ export class Room {
     this.phase = 'roundEnd'; // antes dos setStatus: impede reentrada
     const rest = this.active();
     let place = R.qualified + 1;
-    if (map.mode === 'survival') {
-      // sobreviventes: maior distância percorrida primeiro; se passarem das vagas (tempo esgotado), o resto sai
-      rest.sort((a, b) => b.body.dist - a.body.dist);
-      rest.forEach((e, i) => this.setStatus(e, i < R.cap ? 'qualified' : 'eliminated', place++));
-      R.qualified = Math.min(rest.length, R.cap);
+    if (map.mode === 'survival' && !R.final) {
+      // sobrevivência: todos os que ficaram de pé se qualificam (sem corte fixo)
+      rest.forEach((e) => this.setStatus(e, 'qualified', place++));
+      R.qualified = rest.length;
     } else {
-      // quem não chegou está eliminado, ordenado pelo progresso. Se ninguém chegou (tempo esgotado),
-      // o de maior progresso leva a vaga: é o vencedor na final e mantém a partida viva nas demais.
+      // corrida: quem não chegou está eliminado, em ordem de progresso; se ninguém chegou até o tempo
+      // acabar, o de maior progresso leva a vaga (mantém a partida viva).
+      // final (último de pé): se o tempo acabar com mais de um vivo, vence o maior progresso (mais perto
+      // do centro) e os demais ficam eliminados em ordem de progresso.
       rest.sort((a, b) => map.progress(b.body) - map.progress(a.body));
       rest.forEach((e, i) => {
         const win = R.qualified === 0 && i === 0;
@@ -386,15 +385,18 @@ export class Room {
   }
 }
 
+/** `cap` da rodada, pela regra do modo do mapa (ver qualifyCap em shared/maps/index.js):
+ *  corrida = vagas (metade, arredondando p/ cima); sobrevivência = vivos que encerram a rodada antes do tempo. */
+function capFor(map, n) {
+  if (map.mode === 'survival') return Math.min(map.minAlive ?? 1, n);
+  return Math.max(1, Math.ceil(n / 2));
+}
+
 /** Campos derivados que os ganchos do mapa esperam no corpo-espelho de um humano
- *  (o servidor não roda stepBody/affect neles): coordenadas de pista e checkpoint. */
+ *  (o servidor não roda stepBody/affect neles): coordenadas de pista do tobogã. */
 function syncMirror(map, b) {
   if (map.trackCoords) {
     const c = map.trackCoords(b.x, b.z);
     b.s = c.s; b.d = c.d;
-  }
-  if (map.rings && b.grounded) {
-    const r = Math.hypot(b.x, b.z);
-    for (const rg of map.rings) if (r >= rg.r0 && r <= rg.r1 && rg.cp > b.cp) b.cp = rg.cp;
   }
 }

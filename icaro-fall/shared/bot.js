@@ -370,16 +370,19 @@ function initJets(bot, map) {
   const { rng, skill: sk } = bot;
   return {
     jetFail: 0.01 + (1 - sk) * 0.16, // chance de não reagir a uma passagem de jato
-    jumpLead: 0.2 + (rng() - 0.5) * 0.12 * (1 - sk), // antecedência do pulo sobre jato baixo
-    diveLead: 0.5 + (rng() - 0.5) * 0.14 * (1 - sk), // antecedência do mergulho sob jato alto (>= 0,35 s)
+    jitter: 0.02 + (1 - sk) * 0.23, // erro (s) no instante do pulo/mergulho de esquiva
     // atraso para começar a migrar depois que o anel avisa que vai afundar: craques vão cedo, desastrados tarde
     late: map.rings.map(() => 0.3 + rng() * 1.5 + (1 - sk) * (1 - sk) * rng() * (map.SINK_WARN + 1)),
     edgeErr: (1 - sk) * 0.22, // erro no ponto de decolagem das grades
     wrongGrate: (1 - sk) * 0.25,
     pace: 0.65 + 0.3 * sk, // ritmo de corrida pelo anel
-    rho: 1.8 + rng() * 1.2, // raio em que fica no pódio
+    rho: 2.2 + rng() * 0.8, // raio em que fica no pódio
+    podGap: 1.5 + 0.3 * rng() - (1 - sk) * 0.4, // vão (rad) abaixo do qual decide atravessar um jato
+    podOver: 0.6 + 0.2 * rng(), // quanto pousa além do jato (rad)
+    off: (rng() - 0.5) * 9, // posição de espera pessoal (m ao longo do anel), para não ficarem empilhados
+    pod: null,
     ringId: -1, ang: 0, cross: false, hop: null, edge: 0.3,
-    notice: {}, skip: {}, nextWin: 0,
+    nextWin: 0, dodge: null, nextDodge: 0, threat: false, blindUntil: -1,
   };
 }
 
@@ -387,15 +390,6 @@ function initJets(bot, map) {
 function jetCovers(map, j, t, r) {
   const sp = map.jetSpan(j, t, SP);
   return sp.on && r >= sp.r0 - 0.4 && r <= sp.r1 + 0.4;
-}
-
-/** Primeiro instante (0..horizon) em que o jato alcança o bot, supondo velocidade angular `om`; -1 = não alcança. */
-function jetHitIn(map, j, t, th, om, r, horizon) {
-  const lim = map.JET_RADIUS + 0.4 + 0.2;
-  for (let tau = 0; tau <= horizon; tau += 1 / 30) {
-    if (Math.abs(wrapAngle(th + om * tau - map.jetAngle(j, t + tau))) * r < lim) return tau;
-  }
-  return -1;
 }
 
 /** Há uma janela sem jatos para atravessar pela grade no ângulo `a`? */
@@ -406,8 +400,8 @@ function crossingClear(map, seg, a, t) {
     if (!sp.on) continue;
     const dep = sp.r1 >= seg.lo && sp.r0 <= seg.lo; // varre a saída e a 1ª grade
     const arr = nr && sp.r1 >= nr.hi - 1 && sp.r0 <= nr.hi; // varre o anel de chegada
-    if (dep) for (let tau = 0; tau <= 1.8; tau += 0.1) {
-      if (Math.abs(wrapAngle(map.jetAngle(j, t + tau) - a)) * seg.lo < 1.9) return false;
+    if (dep) for (let tau = 0; tau <= 1.6; tau += 0.1) {
+      if (Math.abs(wrapAngle(map.jetAngle(j, t + tau) - a)) * seg.lo < 1.7) return false;
     }
     if (arr) for (let tau = 2.0; tau <= 3.6; tau += 0.1) {
       if (Math.abs(wrapAngle(map.jetAngle(j, t + tau) - a)) * nr.hi < 2.2) return false;
@@ -416,40 +410,159 @@ function crossingClear(map, seg, a, t) {
   return true;
 }
 
-/** Esquiva: procura o jato que vai me alcançar primeiro e reage. Devolve true se assumiu o controle.
- *  `canDive`: mergulhar aqui é seguro (anel largo, deslize acompanha a curva)? */
-function dodgeJets(bot, b, map, t, inp, r, th, rx, rz, tx, tz, radial, canDive) {
-  const M = bot.mem;
-  const vt = b.vx * tx + b.vz * tz;
-  for (const j of map.jets) {
-    if (!jetCovers(map, j, t, r) || (M.skip[j.id] || 0) > t) continue;
-    const hit = jetHitIn(map, j, t, th, vt / r, r, 1.0);
-    if (hit < 0) continue;
-    if (!((M.notice[j.id] || 0) > t)) { // uma rolagem de atenção por passagem do jato
-      M.notice[j.id] = t + 2.5;
-      if (bot.rng() < M.jetFail) { M.skip[j.id] = t + 2.5; continue; }
-    }
-    const against = map.jetOmega(j, t) >= 0 ? -1 : 1; // de encontro ao jato: a passagem fica curta
-    if (j.low) {
-      if (b.state === 'ground') steer(inp, tx * against + rx * radial, tz * against + rz * radial);
-      if (hit <= M.jumpLead) inp.jump = true;
-      return true;
-    }
-    if (b.state !== 'ground') continue; // deslizando já passa por baixo do jato alto
-    if (canDive) {
-      const hd = jetHitIn(map, j, t, th, (against * 12.5) / r, r, 1.0);
-      if (hd >= 0 && hd <= M.diveLead) {
-        steer(inp, tx * against + rx * radial, tz * against + rz * radial);
-        inp.dive = true;
-        return true;
-      }
+// Esquiva por simulação: como os jatos são determinísticos, o bot testa alguns roteiros simples
+// ("corro para lá e pulo daqui a 0,2 s", "mergulho agora para cá"...) contra as posições futuras dos
+// jatos e escolhe o mais barato que não é atingido. Isso resolve os casos em que um jato baixo e um
+// alto chegam quase juntos, que uma regra "pula o baixo / mergulha sob o alto" não resolve.
+const DODGE_H = 2.2, DODGE_DT = 1 / 30, DODGE_N = Math.round(DODGE_H / DODGE_DT) + 1;
+const DIVE_AIR = (2 * PHYS.DIVE_HOP_V) / PHYS.GRAVITY; // voo do mergulho a partir do chão (~0,38 s)
+const SLIDE_DEC = PHYS.FRICTION.normal * PHYS.GRAVITY + 1; // desaceleração aproximada do deslize
+const JA = []; // ângulos previstos dos jatos ativos: JA[i][n]
+const JLOW = [];
+
+/** Primeiro instante em que o roteiro é atingido (Infinity = passa ileso). Reproduz por alto a física:
+ *  v0: velocidade tangencial atual; dir: sentido da corrida (-1/0/+1; null = segue como está);
+ *  kind: 0 nada, 1 pulo, 2 mergulho, 3 pulo e mergulho ao pousar; at: quando agir (s); sliding: já está deslizando? */
+function scriptHit(map, nj, th, r, v0, dir, kind, at0, sliding) {
+  let at = at0;
+  const lim = map.JET_RADIUS + 0.4 + 0.45; // raio do jato + raio do corpo + folga
+  let ang = th, v = v0, slide = sliding, acted = false, vDive = 0;
+  for (let n = 0; n < DODGE_N; n++) {
+    const u = n * DODGE_DT;
+    let s = u - at;
+    let y0 = 0, h = 1.6;
+    if (kind === 3 && s >= JUMP_T) { kind = 2; at += JUMP_T; s -= JUMP_T; } // pousou: emenda o mergulho
+    if ((kind === 1 || kind === 3) && s >= 0 && s < JUMP_T) { // no ar: mantém a velocidade da decolagem
+      y0 = PHYS.JUMP_V * s - 0.5 * PHYS.GRAVITY * s * s;
+      slide = false;
+    } else if (kind === 2 && s >= 0 && s < DIVE_AIR) {
+      if (!acted) { acted = true; vDive = dir * Math.max(PHYS.DIVE_MIN_SPEED, Math.max(0, v * dir) + PHYS.DIVE_IMPULSE); }
+      y0 = PHYS.DIVE_HOP_V * s - 0.5 * PHYS.GRAVITY * s * s; h = 0.7; v = vDive;
     } else {
-      // sem espaço para deslizar (pódio): foge correndo no sentido do giro, mais rápido que o jato
-      steer(inp, -tx * against + rx * radial, -tz * against + rz * radial);
-      return true;
+      if (kind === 2 && s >= DIVE_AIR && acted) { acted = false; slide = true; v = vDive + dir * PHYS.SLIDE_LAND_BOOST; }
+      if (slide) { // deslizando até parar
+        const a = Math.abs(v);
+        if (a > PHYS.SLIDE_EXIT_SPEED) { h = 0.7; v -= Math.sign(v) * SLIDE_DEC * DODGE_DT; } else slide = false;
+      } else if (dir !== null) { // correndo: acelera até a velocidade de corrida
+        const tv = dir * PHYS.RUN_SPEED, dv = PHYS.GROUND_ACCEL * DODGE_DT;
+        v = Math.abs(tv - v) <= dv ? tv : v + Math.sign(tv - v) * dv;
+      }
+    }
+    for (let i = 0; i < nj; i++) {
+      if (Math.abs(wrapAngle(ang - JA[i][n])) * r > lim) continue;
+      const band = JLOW[i] ? map.LOW_BAND : map.HIGH_BAND;
+      if (y0 + h >= band[0] - 0.1 && y0 <= band[1] + 0.15) return u;
+    }
+    ang += (v / r) * DODGE_DT;
+  }
+  return Infinity;
+}
+
+/** Decide a esquiva. `navDir` = sentido em que a navegação quer correr. Devolve true se assumiu o controle. */
+function dodgeJets(bot, b, map, t, inp, r, th, rx, rz, tx, tz, radial, navDir, canDive) {
+  const M = bot.mem;
+  if (b.state !== 'ground' && b.state !== 'slide') return false;
+  let P = M.dodge;
+  if (P && (P.done || t > P.until)) P = M.dodge = null;
+  if (t >= M.nextDodge && !(P && P.kind && t >= P.at - 0.05)) {
+    M.nextDodge = t + 0.05;
+    // jatos ativos que varrem este raio e suas posições futuras
+    let nj = 0;
+    for (const j of map.jets) {
+      if (!jetCovers(map, j, t, r) && !jetCovers(map, j, t + DODGE_H, r)) continue;
+      const row = JA[nj] || (JA[nj] = new Float64Array(DODGE_N));
+      for (let n = 0; n < DODGE_N; n++) row[n] = map.jetAngle(j, t + n * DODGE_DT);
+      JLOW[nj++] = j.low;
+    }
+    const vt = b.vx * tx + b.vz * tz;
+    const sliding = b.state === 'slide';
+    const base = nj ? scriptHit(map, nj, th, r, vt, navDir, 0, 0, sliding) : Infinity; // o que a navegação faria
+    if (base === Infinity) { M.dodge = null; M.threat = false; return false; }
+    if (!M.threat) { // ameaça nova: rolagem de atenção (desastrados às vezes não veem o jato chegando)
+      M.threat = true;
+      if (bot.rng() < M.jetFail) M.blindUntil = t + 1.8;
+    }
+    if (t < M.blindUntil) return false;
+    // o roteiro em curso continua bom? então mantém (evita ficar trocando de ideia)
+    const keep = P && !P.done && scriptHit(map, nj, th, r, vt, P.dir, P.kind, Math.max(0, P.at - t), sliding) === Infinity;
+    // senão procura o roteiro mais barato que passa ileso (ou, se não houver, o que adia mais o impacto)
+    let best = null, bestCost = Infinity, bestHit = base;
+    if (keep) { best = P; P.until = t + DODGE_H; }
+    const dirs = sliding ? [0] : navDir ? [navDir, -navDir, 0] : [0, 1, -1];
+    for (const dir of keep ? [] : dirs) {
+      const dc = dir === (sliding ? 0 : navDir) ? 0 : dir === 0 ? 0.4 : 1.6; // recuar custa mais que pular adiante
+      for (let kind = 0; kind <= (canDive && !sliding ? 3 : 1); kind++) {
+        if (kind >= 2 && dir === 0) continue;
+        const step = kind >= 2 ? 0.15 : 0.1, max = kind === 0 ? 0 : kind >= 2 ? 0.6 : 0.9;
+        for (let at = 0; at <= max + 1e-9; at += step) {
+          let hit = scriptHit(map, nj, th, r, vt, dir, kind, at, sliding);
+          // folga de tempo: o roteiro tem de funcionar mesmo agindo um pouco antes ou depois
+          if (kind && hit === Infinity) hit = Math.min(scriptHit(map, nj, th, r, vt, dir, kind, Math.max(0, at - 0.09), sliding), scriptHit(map, nj, th, r, vt, dir, kind, at + 0.09, sliding));
+          const cost = dc + (kind === 2 ? 2.5 : kind === 3 ? 3 : kind) + at * 0.2;
+          if (hit === Infinity ? cost < bestCost : bestCost === Infinity && hit > bestHit) {
+            best = { dir, kind, at: t + at, until: t + DODGE_H, done: false };
+            if (hit === Infinity) bestCost = cost; else bestHit = hit;
+          }
+        }
+      }
+    }
+    if (best && best !== P && best.kind) best.at += (bot.rng() - 0.5) * M.jitter; // erro de tempo
+    P = M.dodge = best;
+  }
+  if (!P) return false;
+  if (b.state === 'ground') {
+    const k = P.dir;
+    steer(inp, tx * k + rx * radial, tz * k + rz * radial, k ? 1 : Math.min(1, Math.abs(radial)));
+  }
+  if (P.kind && t >= P.at) {
+    if (P.kind === 2) inp.dive = true; else inp.jump = true;
+    if (P.kind === 3) { P.kind = 2; P.at = t + JUMP_T - 0.05; P.until = P.at + 0.5; } // mergulha assim que pousar
+    else P.done = true;
+  }
+  return true;
+}
+
+/** Pódio (fim da final): os jatos do anel interno recolhem e passam a varrer o pódio. Não há espaço para
+ *  deslizar, e pular correndo joga para fora; então o bot fica no meio do maior vão entre jatos e, quando
+ *  o vão fecha, atravessa um jato BAIXO com um pulo curto em corda, pousando do outro lado. */
+function thinkPodium(bot, b, map, t, inp, r, th, rx, rz, tx, tz) {
+  const M = bot.mem, rho = M.rho;
+  const radial = clamp((rho - r) * 1.2, -1, 1);
+  if (M.pod) { // tomando impulso para atravessar um jato
+    steer(inp, M.pod.x - b.x, M.pod.z - b.z);
+    if (t >= M.pod.at) { inp.jump = true; M.hop = M.pod; M.pod = null; }
+    return;
+  }
+  // jatos que varrem (ou estão prestes a varrer) o meu raio: vizinho de cada lado
+  let aGap = Infinity, bGap = Infinity, ja = null, jb = null, n = 0; // a: lado theta crescente; b: decrescente
+  for (const j of map.jets) {
+    if (!jetCovers(map, j, t + 0.6, rho) && !jetCovers(map, j, t, r)) continue;
+    n++;
+    const d = wrapAngle(map.jetAngle(j, t) - th);
+    const up = d >= 0 ? d : d + 2 * Math.PI, down = 2 * Math.PI - up;
+    if (up < aGap) { aGap = up; ja = j; }
+    if (down < bGap) { bGap = down; jb = j; }
+  }
+  if (!n) { inp.mx = rx * radial; inp.mz = rz * radial; return; }
+  const gap = n === 1 ? 2 * Math.PI : aGap + bGap;
+  if (gap < M.podGap && t >= M.blindUntil) {
+    // vão fechando: escolhe um jato baixo para pular (de preferência o que chega mais rápido de frente)
+    const pick = (j, side) => (j && j.low ? Math.abs(map.jetOmega(j, t)) + (map.jetOmega(j, t) * side < 0 ? 2 : 0) : -1);
+    const sa = pick(ja, 1), sb = pick(jb, -1);
+    const j = sa < 0 && sb < 0 ? null : sa >= sb ? ja : jb, side = j === ja ? 1 : -1;
+    if (j) {
+      if (bot.rng() < M.jetFail) { M.blindUntil = t + 0.5; return; } // hesitou
+      const q = map.jetAngle(j, t + 0.45) + side * M.podOver; // pousa do outro lado do jato
+      M.pod = { x: Math.cos(q) * rho, z: Math.sin(q) * rho, at: t + 0.1 + (bot.rng() - 0.5) * M.jitter };
+      steer(inp, M.pod.x - b.x, M.pod.z - b.z);
+      return;
     }
   }
-  return false;
+  // caminha para o meio do vão
+  const k = clamp(((aGap - bGap) / 2) * rho * 1.5, -1, 1);
+  inp.mx = tx * k + rx * radial; inp.mz = tz * k + rz * radial;
+  const l = Math.hypot(inp.mx, inp.mz);
+  if (l > 1) { inp.mx /= l; inp.mz /= l; }
 }
 
 function thinkJets(bot, b, map, world, inp) {
@@ -476,21 +589,7 @@ function thinkJets(bot, b, map, world, inp) {
   const seg = segs.find((q) => r >= q.lo - 0.05 && r <= q.hi + 0.05);
   if (!seg) return;
 
-  if (seg.kind === 'podium') {
-    // pódio: fica num raio confortável; pula os jatos baixos e mantém-se do lado oposto ao jato alto
-    M.ringId = -1;
-    const radial = clamp((M.rho - r) * 1.2, -1, 1);
-    if (dodgeJets(bot, b, map, t, inp, r, th, rx, rz, tx, tz, radial, false)) return;
-    let k = 0;
-    for (const j of map.jets) {
-      if (j.low || !jetCovers(map, j, t, r)) continue;
-      k = clamp(wrapAngle(map.jetAngle(j, t) + Math.PI - th) * r, -1, 1);
-    }
-    inp.mx = tx * k + rx * radial; inp.mz = tz * k + rz * radial;
-    const l = Math.hypot(inp.mx, inp.mz);
-    if (l > 1) { inp.mx /= l; inp.mz /= l; }
-    return;
-  }
+  if (seg.kind === 'podium') { M.ringId = -1; thinkPodium(bot, b, map, t, inp, r, th, rx, rz, tx, tz); return; }
 
   if (seg.kind === 'grate') {
     // no meio da travessia: segue pela grade mais próxima
@@ -515,11 +614,13 @@ function thinkJets(bot, b, map, world, inp) {
     const sgn = b.vx * tx + b.vz * tz >= 0 ? 1 : -1;
     steer(inp, tx * sgn + rx * radial, tz * sgn + rz * radial);
   }
-  if (!(M.cross && urgent) && dodgeJets(bot, b, map, t, inp, r, th, rx, rz, tx, tz, radial, true)) { M.cross = false; return; }
+  const waitOff = t < goT - 2 ? M.off : 0; // até perto da hora, espera um pouco ao lado da grade
+  const arc = wrapAngle(M.ang - th) * r + waitOff;
+  const navDir = M.cross || Math.abs(arc) <= 0.5 ? 0 : Math.sign(arc);
+  if (!M.cross && !urgent && dodgeJets(bot, b, map, t, inp, r, th, rx, rz, tx, tz, radial, navDir, true)) return;
   if (b.state === 'slide') return;
 
   // navegação: vai para o ângulo da grade e espera ali; na hora de migrar, aguarda uma janela e atravessa
-  const arc = wrapAngle(M.ang - th) * r;
   if (Math.abs(arc) > 1.2) M.cross = false;
   if (M.cross) { crossStep(M, map, inp, seg, M.ang, r, th, rx, rz, tx, tz); return; }
   if (Math.abs(arc) > 0.5) {

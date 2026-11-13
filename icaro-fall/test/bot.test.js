@@ -10,13 +10,13 @@ const [slide, arena, jets] = MAPS;
 const N = 16;
 
 /** Roda n bots até o fim do tempo. done = instante em que terminou (corrida) ou caiu (sobrevivência); null = nenhum dos dois. */
-function simulate(map, seed, n = N) {
+function simulate(map, seed, n = N, skill) {
   const popped = new Set();
   const es = [];
   for (let i = 0; i < n; i++) {
     const body = createBody();
     placeBody(body, map.spawn(i, n));
-    es.push({ bot: createBot(seed * 1000 + i), body, inp: createInput(), world: { t: 0, popped, events: [] }, done: null, falls: 0 });
+    es.push({ bot: createBot(seed * 1000 + i, skill), body, inp: createInput(), world: { t: 0, popped, events: [] }, done: null, falls: 0 });
   }
   for (let k = 0; k * TICK < map.timeLimit; k++) {
     for (const e of es) {
@@ -71,7 +71,7 @@ test('tobogã: a maioria dos 16 bots termina dentro do tempo, com dispersão', (
   }
 });
 
-test('arena: bots sobrevivem bem mais que um corpo parado e caem de forma escalonada', () => {
+test('arena: bots duram bem mais que um corpo parado, caem de forma escalonada e os craques chegam ao fim', () => {
   // referência: corpo parado na largada
   const still = createBody(), world = { t: 0, popped: new Set(), events: [] }, inp = createInput();
   placeBody(still, arena.spawn(0, N));
@@ -79,25 +79,61 @@ test('arena: bots sobrevivem bem mais que um corpo parado e caem de forma escalo
   for (const seed of [1, 2]) {
     const es = simulate(arena, seed);
     const times = es.map((e) => e.done ?? arena.timeLimit).sort((a, b) => a - b);
+    const falls = times.filter((t) => t < arena.timeLimit);
     const m = mean(times);
-    console.log(`  semente ${seed}: parado cai em ${world.t.toFixed(0)} s; bots: média ${m.toFixed(0)} s; quedas (s): ${fmt(times)}`);
+    console.log(`  16 bots, semente ${seed}: parado cai em ${world.t.toFixed(0)} s; média ${m.toFixed(0)} s; ${N - falls.length} vivos aos 180 s; quedas (s): ${fmt(falls)}`);
     assert.ok(m > world.t * 1.5, `média ${m.toFixed(1)} vs parado ${world.t.toFixed(1)}`);
-    // escalonado: nenhum segundo concentra metade das quedas, e elas se espalham por mais de 40 s
+    // escalonado: nenhum segundo concentra metade das quedas, e elas se espalham no tempo
     const perSecond = new Map();
-    for (const t of times) perSecond.set(Math.floor(t), (perSecond.get(Math.floor(t)) || 0) + 1);
+    for (const t of falls) perSecond.set(Math.floor(t), (perSecond.get(Math.floor(t)) || 0) + 1);
     assert.ok(Math.max(...perSecond.values()) <= N / 2, 'não caem todos de uma vez');
-    assert.ok(times.at(-1) - times[0] > 40, 'quedas espalhadas no tempo');
-    assert.ok(new Set(times.map((t) => Math.floor(t / 5))).size >= 5, 'vários momentos de eliminação');
+    assert.ok(falls.at(-1) - falls[0] > 40, 'quedas espalhadas no tempo');
+    assert.ok(falls.length >= 4 && falls.length < N, 'alguns caem, alguns sobrevivem');
   }
+  // caso real: 8 participantes depois do corte do tobogã
+  const alive = [1, 2, 3, 4, 5, 6].map((seed) => simulate(arena, seed, 8).filter((e) => e.done === null).length);
+  console.log(`  8 bots: vivos aos 180 s por semente: ${alive.join(' ')} (média ${mean(alive).toFixed(1)})`);
+  assert.ok(mean(alive) >= 1.5 && mean(alive) <= 5.5, `média de vivos ${mean(alive)}`);
+  // bots de habilidade máxima conseguem sobreviver a rodada inteira
+  const pros = simulate(arena, 9, 8, 1).filter((e) => e.done === null).length;
+  console.log(`  8 craques (skill 1): ${pros} vivos aos 180 s`);
+  assert.ok(pros >= 5, `craques vivos: ${pros}/8`);
 });
 
-test('labirinto: bots chegam ao pódio antes do tempo acabar', () => {
-  for (const seed of [1, 2]) {
-    const es = simulate(jets, seed);
-    const ok = es.map((e) => e.done).filter((t) => t !== null).sort((a, b) => a - b);
-    const hits = es.reduce((a, e) => a + e.body.hits, 0), falls = es.reduce((a, e) => a + e.falls, 0);
-    console.log(`  semente ${seed}: ${ok.length}/${N} no pódio; tempos (s): ${fmt(ok)}; jatos acertaram ${hits}x; quedas na água ${falls}`);
-    assert.ok(ok.length >= 4, `chegaram ${ok.length}/${N}`);
-    assert.ok(ok.at(-1) < jets.timeLimit);
+/** Final: roda até sobrar um (regra do servidor) ou o tempo acabar. */
+function lastStanding(seed, n) {
+  const es = [];
+  for (let i = 0; i < n; i++) {
+    const body = createBody();
+    placeBody(body, jets.spawn(i, n));
+    es.push({ bot: createBot(seed * 1000 + i), body, inp: createInput(), world: { t: 0, popped: new Set(), events: [] }, done: null });
+  }
+  let alive = n, t = 0;
+  for (let k = 0; k * TICK < jets.timeLimit && alive > 1; k++) {
+    t = k * TICK;
+    for (const e of es) {
+      if (e.done !== null || alive <= 1) continue;
+      e.world.t = t; e.world.events.length = 0;
+      botThink(e.bot, e.body, jets, e.world, e.inp, TICK);
+      stepBody(e.body, e.inp, jets, e.world, TICK);
+      if (e.body.fell) { e.done = t; alive--; }
+    }
+  }
+  return { alive, end: t, falls: es.map((e) => e.done).filter((x) => x !== null).sort((a, b) => a - b) };
+}
+
+test('labirinto (final): eliminações escalonadas e, quase sempre, um único de pé antes do tempo acabar', () => {
+  for (const n of [8, 4]) {
+    let single = 0;
+    const seeds = [1, 2, 3, 4, 5, 6];
+    for (const seed of seeds) {
+      const r = lastStanding(seed, n);
+      if (r.alive === 1) single++;
+      console.log(`  ${n} bots, semente ${seed}: quedas (s): ${fmt(r.falls)} -> ${r.alive === 1 ? `vencedor aos ${r.end.toFixed(0)} s` : `${r.alive} de pé aos 210 s`}`);
+      assert.ok(r.alive >= 1, 'sempre sobra alguém (as quedas são processadas uma a uma)');
+      assert.ok(r.falls[0] > 10, 'ninguém cai logo de cara');
+      if (n === 8) assert.ok(r.falls.at(-1) - r.falls[0] > 30, 'eliminações espalhadas no tempo');
+    }
+    assert.ok(single >= seeds.length - 1, `um único sobrevivente em ${single}/${seeds.length} sementes`);
   }
 });

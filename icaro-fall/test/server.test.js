@@ -64,7 +64,7 @@ test('lobby: nomes sanitizados, personagem válido, menor cor livre', () => {
   assert.deepEqual(a.last('pong'), { t: 'pong', c: 42, now: 1234 });
 });
 
-test('partida completa com 1 humano parado + 15 bots: 16 -> 8 -> 4 -> 1 e volta ao lobby', () => {
+test('partida completa com 1 humano parado + 15 bots: corrida corta para 8, arena e final por sobrevivência, volta ao lobby', () => {
   const clock = { now: 1_000_000 };
   const room = new Room({ seed: 7 });
   const a = fakeClient(room, clock.now, 'Ana');
@@ -123,40 +123,44 @@ test('partida completa com 1 humano parado + 15 bots: 16 -> 8 -> 4 -> 1 e volta 
   advance(room, clock, () => a.last('snap').p.length === 8, 3);
   assert.ok(a.last('snap').p.every((row) => row[9] & FLAG.QUALIFIED));
 
-  // rodada 2: arena só com os 8 qualificados
+  // rodada 2: arena só com os 8 qualificados; dura até o tempo acabar (ou sobrarem 2) e todos os vivos passam
   advance(room, clock, () => a.of('round').length === 2, 8);
   const r1 = a.last('round');
   assert.equal(r1.mapId, 'arena');
-  assert.equal(r1.cap, 4);
+  assert.equal(r1.cap, arena.minAlive);
   assert.deepEqual(r1.players.map((p) => p.id).sort(), e0.results.slice(0, 8).map((r) => r.id).sort());
   assert.ok(Math.abs(r1.startAt - (r0.startAt + tEnd0 * 1000) - (7000 + 4500)) < 40, 'pausa de ~7 s + intro de 4,5 s');
   const nStatus = a.of('status').length;
   advance(room, clock, () => a.of('roundEnd').length === 2, arena.timeLimit + 10);
   const e1 = a.last('roundEnd');
   checkResults(e1.results, 8);
-  assert.equal(e1.results.filter((r) => r.status === 'qualified').length, 4);
-  // quem caiu por último fica melhor colocado: os status de eliminação saem do 8º para o 5º
+  const tEnd1 = (clock.now - r1.startAt) / 1000;
+  const q1 = e1.results.filter((r) => r.status === 'qualified').length;
+  console.log(`  arena: acabou em ${tEnd1.toFixed(1)} s com ${q1} qualificados`);
+  assert.ok(q1 >= 2 && q1 < 8, `qualificados na arena: ${q1}`);
+  if (q1 > 2) assert.ok(Math.abs(tEnd1 - arena.timeLimit) < 0.1, 'com mais de 2 vivos a rodada vai até o tempo limite');
+  // quem caiu por último fica melhor colocado: os status de eliminação saem do 8º para cima
   const st1 = a.of('status').slice(nStatus).filter((s) => s.status === 'eliminated');
-  assert.deepEqual(st1.map((s) => s.place), [8, 7, 6, 5]);
-  console.log(`  arena: rodada acabou em ${((clock.now - r1.startAt) / 1000).toFixed(1)} s`);
+  assert.deepEqual(st1.map((s) => s.place), Array.from({ length: 8 - q1 }, (_, i) => 8 - i));
 
-  // rodada 3: final com 4, um vencedor
+  // rodada 3: final "último de pé" com os sobreviventes da arena
   advance(room, clock, () => a.of('round').length === 3, 8);
   const r2 = a.last('round');
   assert.equal(r2.mapId, 'jets');
   assert.equal(r2.cap, 1);
-  assert.equal(r2.players.length, 4);
+  assert.equal(r2.players.length, q1);
   advance(room, clock, () => a.of('roundEnd').length === 3, jets.timeLimit + 10);
   const e2 = a.last('roundEnd');
   assert.equal(e2.final, true);
-  checkResults(e2.results, 4);
+  checkResults(e2.results, q1);
   assert.equal(e2.results.filter((r) => r.status === 'qualified').length, 1);
+  console.log(`  final: acabou em ${((clock.now - r2.startAt) / 1000).toFixed(1)} s`);
 
   advance(room, clock, () => a.last('gameEnd'), 8);
   const g = a.last('gameEnd');
   assert.equal(g.winnerId, e2.results[0].id);
   assert.equal(g.lobbyIn, 12000);
-  assert.deepEqual(g.podium.map((p) => p.place), [1, 2, 3]);
+  assert.deepEqual(g.podium.map((p) => p.place), [1, 2, 3].slice(0, Math.min(3, q1)));
   assert.ok(g.podium.every((p) => p.name && p.char && Number.isInteger(p.color)));
   assert.ok(late.last('gameEnd'), 'espectador também recebe');
 
@@ -166,52 +170,73 @@ test('partida completa com 1 humano parado + 15 bots: 16 -> 8 -> 4 -> 1 e volta 
   assert.equal(room.phase, 'lobby');
 });
 
-test('arena: tempo esgotado desempata por distância percorrida; final sem chegada vence o maior progresso', () => {
+test('sobrevivência: no tempo limite todos os vivos se qualificam; na final vence quem está mais perto do centro', () => {
   const clock = { now: 5000 };
-  const room = new Room({ seed: 3, totalPlayers: 4, timeLimit: 5, maps: [arena, jets] });
-  const cs = ['A', 'B', 'C', 'D'].map((n) => fakeClient(room, clock.now, n));
-  const [a, b, c, d] = cs;
+  const room = new Room({ seed: 3, totalPlayers: 5, timeLimit: 5, maps: [arena, jets] });
+  const cs = ['A', 'B', 'C', 'D', 'E'].map((n) => fakeClient(room, clock.now, n));
+  const [a, b, c, d, e] = cs;
   room.handle(a.id, { t: 'start' }, clock.now);
   const r0 = a.last('round');
-  assert.equal(r0.players.length, 4);
+  assert.equal(r0.players.length, 5);
   assert.ok(r0.players.every((p) => !p.bot));
-  assert.equal(r0.cap, 2);
+  assert.equal(r0.cap, 2, 'cap da arena = minAlive');
   assert.equal(r0.timeLimit, 5);
-  // A anda muito, B anda pouco, C e D ficam parados (todos em cima da plataforma central)
+  // A, B e C ficam em cima da plataforma central; D cai na água; E manda lixo (ignorado, continua vivo)
   let k = 0;
   advance(room, clock, () => a.last('roundEnd'), 12, () => {
-    k++;
-    if (k % 3) return;
-    const w = (k % 120) / 120; // vai e volta
-    room.handle(a.id, state(4 * (w < 0.5 ? w : 1 - w) * 2, 1, 0), clock.now);
-    room.handle(b.id, state(-3 + 0.5 * (w < 0.5 ? w : 1 - w), 1, 0), clock.now);
+    if (++k % 3) return;
+    room.handle(a.id, state(2, 1, 0), clock.now);
+    room.handle(b.id, state(-3, 1, 0), clock.now);
     room.handle(c.id, state(0, 1, 3), clock.now);
-    room.handle(d.id, { t: 's', p: [0, NaN, 0, 0, 0, 0, 0], st: 0, f: 0 }, clock.now); // inválido: ignorado
-    room.handle(d.id, { t: 's', p: 'lixo' }, clock.now);
+    if (clock.now > r0.startAt + 1000) room.handle(d.id, state(20, -2, 0, 1), clock.now);
+    room.handle(e.id, { t: 's', p: [0, NaN, 0, 0, 0, 0, 0], st: 0, f: 0 }, clock.now);
+    room.handle(e.id, { t: 's', p: 'lixo' }, clock.now);
   });
   const e0 = a.last('roundEnd');
-  checkResults(e0.results, 4);
-  assert.deepEqual(e0.results.slice(0, 2).map((r) => [r.name, r.status]), [['A', 'qualified'], ['B', 'qualified']]);
-  assert.ok(e0.results.slice(2).every((r) => r.status === 'eliminated'));
-  assert.ok(Math.abs((clock.now - r0.startAt) / 1000 - 5) < 0.1, 'acabou no tempo limite');
+  checkResults(e0.results, 5);
+  assert.deepEqual(e0.results.map((r) => r.status), ['qualified', 'qualified', 'qualified', 'qualified', 'eliminated']);
+  assert.deepEqual(e0.results[4], { id: d.id, name: 'D', status: 'eliminated', place: 5 });
+  assert.ok(Math.abs((clock.now - r0.startAt) / 1000 - 5) < 0.1, 'foi até o tempo limite (4 vivos > cap)');
 
-  // final: ninguém chega; B está mais perto do pódio
+  // final: ninguém cai; quando o tempo acaba vence o mais perto do centro, demais em ordem de progresso
   advance(room, clock, () => a.of('round').length === 2, 8);
   const r1 = a.last('round');
-  assert.deepEqual(r1.players.map((p) => p.name).sort(), ['A', 'B']);
+  assert.equal(r1.mapId, 'jets');
+  assert.equal(r1.cap, 1);
+  assert.deepEqual(r1.players.map((p) => p.name).sort(), ['A', 'B', 'C', 'E']);
   advance(room, clock, () => a.of('roundEnd').length === 2, 12, () => {
     room.handle(a.id, state(40, 1, 0), clock.now);
     room.handle(b.id, state(15, 1, 0), clock.now);
-    room.handle(c.id, state(0, 1.3, 0), clock.now); // eliminada na rodada anterior: não conta
+    room.handle(c.id, state(0, 1, 30), clock.now);
+    room.handle(d.id, state(0, 1, 0), clock.now); // eliminada na rodada anterior: não conta
   });
   const e1 = a.last('roundEnd');
   assert.equal(e1.final, true);
-  assert.deepEqual(e1.results.map((r) => [r.name, r.status, r.place]), [['B', 'qualified', 1], ['A', 'eliminated', 2]]);
+  assert.deepEqual(e1.results.map((r) => [r.name, r.status, r.place]),
+    [['B', 'qualified', 1], ['C', 'eliminated', 2], ['A', 'eliminated', 3], ['E', 'eliminated', 4]]);
   advance(room, clock, () => a.last('gameEnd'), 8);
   assert.equal(a.last('gameEnd').winnerId, b.id);
+  assert.deepEqual(a.last('gameEnd').podium.map((p) => p.name), ['B', 'C', 'A']);
 });
 
-test('arena: queda elimina; quedas simultâneas não deixam menos vivos que vagas; desconexão elimina', () => {
+test('final: último de pé vence na hora; quem cai por último entre os eliminados fica melhor colocado', () => {
+  const clock = { now: 0 };
+  const room = new Room({ seed: 4, totalPlayers: 3, maps: [jets] });
+  const [a, b, c] = ['A', 'B', 'C'].map((n) => fakeClient(room, clock.now, n));
+  room.handle(a.id, { t: 'start' }, clock.now);
+  const r0 = a.last('round');
+  assert.equal(r0.cap, 1);
+  advance(room, clock, () => clock.now >= r0.startAt + 300, 10);
+  room.handle(c.id, state(47, 0, 0, 1), clock.now); // C cai na água
+  assert.deepEqual(a.last('status'), { t: 'status', id: c.id, status: 'eliminated', place: 3 });
+  assert.equal(a.of('roundEnd').length, 0);
+  room.handle(a.id, state(47, -1, 0, 1), clock.now); // A cai: sobra B
+  const e0 = a.last('roundEnd');
+  assert.equal(e0.final, true);
+  assert.deepEqual(e0.results.map((r) => [r.name, r.status, r.place]), [['B', 'qualified', 1], ['A', 'eliminated', 2], ['C', 'eliminated', 3]]);
+});
+
+test('arena: queda elimina; encerra antes do tempo quando vivos <= 2; desconexão elimina', () => {
   const clock = { now: 0 };
   const room = new Room({ seed: 5, totalPlayers: 4, maps: [arena, jets] });
   const [a, b, c, d] = ['A', 'B', 'C', 'D'].map((n) => fakeClient(room, clock.now, n));
@@ -221,14 +246,14 @@ test('arena: queda elimina; quedas simultâneas não deixam menos vivos que vaga
   room.handle(a.id, state(0, -5, 0, 1), clock.now);
   advance(room, clock, () => clock.now >= r0.startAt + 500, 10);
   assert.equal(a.of('status').length, 0);
-  // D sai e depois três "caem" no mesmo instante, com 2 vagas: só o primeiro registrado é eliminado
+  // D sai e depois três "caem" no mesmo instante: a rodada fecha quando sobram 2 (cap), que ficam vivos
   room.disconnect(d.id, clock.now); // D desconecta: eliminado (4º)
   assert.deepEqual(a.last('status'), { t: 'status', id: d.id, status: 'eliminated', place: 4 });
   room.handle(a.id, state(0, -5, 0, 1), clock.now);
   room.handle(b.id, state(0, -5, 0, 1), clock.now);
   room.handle(c.id, state(0, -5, 0, 1), clock.now);
   const e0 = a.last('roundEnd');
-  assert.ok(e0, 'rodada acabou quando vivos <= vagas');
+  assert.ok(e0, 'rodada acabou quando vivos <= cap');
   assert.deepEqual(e0.results.map((r) => [r.name, r.status]).sort(), [['A', 'eliminated'], ['B', 'qualified'], ['C', 'qualified'], ['D', 'eliminated']]);
   assert.equal(e0.results.find((r) => r.name === 'A').place, 3);
   // todos os humanos saem: a partida é encerrada e a sala volta ao lobby
@@ -292,7 +317,7 @@ test('integração WebSocket: lobby -> 3 rodadas -> gameEnd -> lobby, com tempos
     a.send('isto não é JSON'); // lixo não derruba a conexão
     a.send({ semTipo: true });
 
-    // ── rodada 1 (tobogã): Ana "termina" teleportando o estado para a chegada; Beto fica parado
+    // ── rodada 1 (tobogã): Ana "termina" teleportando o estado para a chegada; Beto fica parado e chega no fim
     b.send({ t: 'start' });
     const r0 = await a.wait((m) => m.t === 'round');
     assert.equal(r0.round, 0);
@@ -331,38 +356,51 @@ test('integração WebSocket: lobby -> 3 rodadas -> gameEnd -> lobby, com tempos
       await c.wait((m) => m.t === 'snap');
       c.ws.close();
 
-      // tempo esgota (3 s): só Ana chegou
+      // Beto para de reportar a largada e "chega" também (2º lugar)
+      clearInterval(reportB);
+      b.send(state(fin.x, fin.y, fin.z, 3));
+      assert.deepEqual(await b.wait((m) => m.t === 'status' && m.id === wb.id), { t: 'status', id: wb.id, status: 'qualified', place: 2 });
+
+      // tempo esgota (3 s): os bots não chegaram
       const e0 = await a.wait((m) => m.t === 'roundEnd');
       assert.equal(e0.round, 0);
       assert.equal(e0.final, false);
       assert.equal(e0.nextIn, 300);
       checkResults(e0.results, 6);
-      assert.deepEqual(e0.results.map((r) => r.status), ['qualified', 'eliminated', 'eliminated', 'eliminated', 'eliminated', 'eliminated']);
-      assert.equal(e0.results[0].id, wa.id);
-      const stB = await b.wait((m) => m.t === 'status' && m.id === wb.id);
-      assert.equal(stB.status, 'eliminated');
-      assert.equal(stB.place, 6, 'parado na largada: menor progresso');
+      assert.deepEqual(e0.results.map((r) => r.status), ['qualified', 'qualified', 'eliminated', 'eliminated', 'eliminated', 'eliminated']);
+      assert.deepEqual(e0.results.slice(0, 2).map((r) => r.id), [wa.id, wb.id]);
+      assert.ok(Date.now() >= r0.startAt + 2900, 'com vagas sobrando, a corrida vai até o tempo limite');
     } finally { clearInterval(reportB); }
 
-    // ── rodada 2 (arena): só Ana qualificada => vivos <= vagas logo na largada
+    // ── rodada 2 (arena): só 2 participantes => vivos <= cap (2) logo na largada, ambos passam
     const r1 = await a.wait((m) => m.t === 'round' && m.round === 1);
     assert.equal(r1.mapId, 'arena');
-    assert.deepEqual(r1.players.map((p) => p.id), [wa.id]);
-    assert.equal(r1.cap, 1);
+    assert.deepEqual(r1.players.map((p) => p.id), [wa.id, wb.id]);
+    assert.equal(r1.cap, 2);
     const e1 = await a.wait((m) => m.t === 'roundEnd' && m.round === 1);
-    assert.deepEqual(e1.results, [{ id: wa.id, name: 'Ana', status: 'qualified', place: 1 }]);
+    assert.deepEqual(e1.results.map((r) => [r.id, r.status]), [[wa.id, 'qualified'], [wb.id, 'qualified']]);
+    assert.equal(e1.final, false);
 
-    // ── rodada 3 (final): Ana reporta estar em cima do pódio
+    // ── rodada 3 (final, último de pé): Beto reporta que caiu na água; Ana vence na hora
     const r2 = await a.wait((m) => m.t === 'round' && m.round === 2);
     assert.equal(r2.mapId, 'jets');
     assert.equal(r2.cap, 1);
+    assert.equal(r2.players.length, 2);
     await a.wait((m) => m.t === 'snap' && m.time > 0.05, 15000, a.msgs.indexOf(r2));
-    a.send(state(0.5, jets.podium.y, 0.5));
+    const spA = r2.players.find((p) => p.id === wa.id).spawn;
+    a.send(state(spA.x, spA.y, spA.z));
+    b.send(state(41.5, jets.killY - 0.5, 20, 1));
+    const out = await a.wait((m) => m.t === 'status' && m.id === wb.id, 15000, a.msgs.indexOf(r2));
+    assert.deepEqual(out, { t: 'status', id: wb.id, status: 'eliminated', place: 2 });
     const e2 = await a.wait((m) => m.t === 'roundEnd' && m.round === 2);
     assert.equal(e2.final, true);
+    assert.deepEqual(e2.results.map((r) => [r.id, r.status, r.place]), [[wa.id, 'qualified', 1], [wb.id, 'eliminated', 2]]);
     const g = await b.wait((m) => m.t === 'gameEnd'); // Beto, eliminado, continua assistindo
     assert.equal(g.winnerId, wa.id);
-    assert.deepEqual(g.podium, [{ id: wa.id, name: 'Ana', char: 'icaro', color: 0, place: 1 }]);
+    assert.deepEqual(g.podium, [
+      { id: wa.id, name: 'Ana', char: 'icaro', color: 0, place: 1 },
+      { id: wb.id, name: 'Beto', char: 'penguin', color: 1, place: 2 },
+    ]);
     assert.equal(g.lobbyIn, 300);
 
     // ── de volta ao lobby: humanos conectados, sem bots
