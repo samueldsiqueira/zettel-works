@@ -359,7 +359,7 @@ function jetsNav(map) {
     if (s.kind === 'ring') {
       s.angles = s.next.angles; // ângulos das grades da travessia para dentro
       s.nextRing = segs.slice(i + 1).find((q) => q.kind === 'ring') || null;
-      s.travelR = s.lo + 2.2; // raio de espera: longe da borda de fora (um jato empurra ~3 m para fora)
+      s.travelR = s.lo + 1.3; // raio de espera: longe da borda de fora (um jato empurra quase 4 m para fora)
     }
   });
   NAV.set(map, segs);
@@ -543,7 +543,7 @@ function crossStep(M, map, inp, seg, a, r, th, rx, rz, tx, tz) {
   const next = seg.next;
   const arc = wrapAngle(a - th) * r;
   const edgeDist = r - seg.lo;
-  const L = next.kind === 'grate' ? next.hi - 1.0 : next.hi - 1.4; // raio de pouso
+  const L = next.hi - (next.kind === 'grate' ? 1.0 : next.kind === 'ring' ? 2.4 : 1.4); // raio de pouso
   const v = (seg.lo + 0.3 - L) / JUMP_T; // velocidade para o pulo cair no ponto certo
   const mag = edgeDist < 1.3 ? clamp(v / PHYS.RUN_SPEED, 0.35, 1) : 1;
   const k = clamp(arc * 1.5, -0.6, 0.6);
