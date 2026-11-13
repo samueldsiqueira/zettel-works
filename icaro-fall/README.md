@@ -5,9 +5,9 @@ eliminada a cada fase.
 
 | Fase | Mapa | Regra |
 |---|---|---|
-| 1 | **O Tobogã Radical** | Corrida de toboágua. Deslize de barriga, aceleradores (+50%) e boias que freiam. 8 vagas. |
-| 2 | **A Arena de Sobrevivência** | A plataforma central encolhe; as flutuantes orbitam e afundam. Sobram 4. |
-| 3 | **O Labirinto de Jatos** | Final. Atravesse os anéis pelas grades, desvie dos jatos e chegue ao pódio. 1 vencedor. |
+| 1 | **O Tobogã Radical** | Corrida de toboágua. Deslize de barriga, aceleradores (+50%) e boias que freiam. Metade se qualifica. |
+| 2 | **A Arena de Sobrevivência** | A plataforma central encolhe; as flutuantes orbitam e afundam. Quem estiver vivo ao fim do tempo avança. |
+| 3 | **O Labirinto de Jatos** | Final. Jatos giratórios empurram para a água e os anéis afundam de fora para dentro. Último de pé vence. |
 
 ## Rodar
 

@@ -6,7 +6,7 @@ import { PHYS } from '../constants.js';
 import { makeRng, TAU, clamp, smoothstep } from '../rng.js';
 
 const TOP_Y = 1.0; // topo das plataformas acima da água (água em y = 0)
-const center = { y: TOP_Y, r0: 14, shrinkStart: 15, shrinkEnd: 105 };
+const center = { y: TOP_Y, r0: 14, shrinkStart: 15, shrinkEnd: 120 };
 
 /** Raio da plataforma central no tempo t (0 = sumiu). */
 export function centerRadius(t) {
@@ -28,7 +28,7 @@ const floats = [];
     for (let i = 0; i < rg.n; i++) {
       floats.push({
         id: id++,
-        rho: rg.rho, w: rg.w, a0: (i / rg.n) * TAU + rng() * 0.3,
+        rho: rg.rho, w: rg.w, a0: (i / rg.n) * TAU + rng() * 0.1,
         r: rg.r - rng() * 0.4,
         period: 13 + rng() * 8, phase: rng() * 20,
         tiltA: 0.07 + rng() * 0.07, tiltF: 0.7 + rng() * 0.8, tiltP: rng() * TAU,
@@ -38,7 +38,7 @@ const floats = [];
   }
 }
 
-const SINK_T = 1.2; // s para afundar / emergir
+export const SINK_T = 1.2; // s para afundar / emergir
 export const WARN_T = 2.0; // s de aviso (telegrafia) antes de afundar
 
 /** Estado de uma plataforma flutuante em t.
@@ -50,7 +50,7 @@ export function floatState(f, t, out = {}) {
   out.vx = -f.rho * f.w * sa; out.vz = f.rho * f.w * ca;
   // ciclo de submersão: o tempo submerso cresce ao longo da rodada
   const tt = Math.max(0, t);
-  const down = 2.5 + 6 * clamp(tt / 170, 0, 1); // s submersa por ciclo
+  const down = 2.5 + 3.5 * clamp(tt / 170, 0, 1); // s submersa por ciclo
   const ph = (((tt + f.phase) % f.period) + f.period) % f.period;
   const startDown = f.period - down - SINK_T;
   let sink = 0;
@@ -75,6 +75,7 @@ export const arenaMap = {
   id: 'arena',
   name: 'A Arena de Sobrevivência',
   mode: 'survival',
+  minAlive: 2, // a rodada dura o tempo todo; só encerra antes se restarem 2 ou menos
   timeLimit: 180,
   killY: -0.5,
   waterY: 0,

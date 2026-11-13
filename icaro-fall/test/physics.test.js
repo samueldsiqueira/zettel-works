@@ -20,10 +20,10 @@ function run(map, seconds, ctl, b = createBody(), world = createWorld(), spawnI 
   return { b, world };
 }
 
-test('vagas de qualificação: 16 -> 8 -> 4 -> 1', () => {
+test('cap por rodada: corrida = metade; sobrevivência = minAlive', () => {
   assert.equal(qualifyCap(0, 16), 8);
-  assert.equal(qualifyCap(1, 8), 4);
-  assert.equal(qualifyCap(2, 4), 1);
+  assert.equal(qualifyCap(1, 8), 2);
+  assert.equal(qualifyCap(2, 5), 1);
 });
 
 test('fica parado no chão da largada em todos os mapas', () => {
@@ -111,22 +111,21 @@ test('arena: plataformas flutuantes são sólidas e carregam o jogador', () => {
   assert.ok(Math.hypot(b.x - s2.x, b.z - s2.z) < f.r, 'continua em cima');
 });
 
-test('labirinto: jato atinge quem fica parado; água devolve ao checkpoint', () => {
+test('labirinto: jato atinge quem fica parado; cair na água elimina', () => {
   const { b } = run(jets, 40, () => {});
   assert.ok(b.hits > 0, 'foi atingido');
-  const c = createBody(); placeBody(c, { x: 38, y: 3, z: 0.0 }); c._placed = true; // canal, fora das grades? (grade em a=0, r 36.9±1) -> x=38.5
-  c.x = 38.5;
+  const c = createBody(); placeBody(c, { x: 38.5, y: 3, z: 0 }); c._placed = true; // canal, entre as grades
   run(jets, 3, (b) => { if (b.fell) return false; }, c);
   assert.ok(c.fell);
-  jets.respawn(c);
-  assert.ok(!c.fell && Math.hypot(c.x, c.z) > 43);
 });
 
-test('labirinto: grades são pisáveis e o pódio conta como chegada', () => {
-  const g = jets.grates[0];
-  const o = {};
+test('labirinto: grades são pisáveis; anéis afundam de fora para dentro; pódio fica', () => {
+  const g = jets.grates[0], o = {};
   assert.ok(jets.groundAt(Math.cos(g.a) * g.r, Math.sin(g.a) * g.r, 1, 0, o));
-  const b = createBody(); placeBody(b, { x: 1, y: 3, z: 1 }); b._placed = true;
-  run(jets, 2, () => {}, b);
-  assert.ok(jets.finished(b));
+  assert.equal(jets.groundAt(46, 0, 1, 10, o).y, 1);
+  assert.ok(jets.ringState(2, 45).warn > 0);
+  const { b, world } = run(jets, 80, (b) => { if (b.fell) return false; b.hitCd = 9; });
+  assert.ok(b.fell && world.t > 50 && world.t < 56, `anel externo afundou (t=${world.t})`);
+  assert.ok(jets.groundAt(1, 1, 1, 209, o));
+  assert.equal(jets.jetSpan(jets.jets[0], 200).r1, 4.5);
 });

@@ -11,6 +11,12 @@ Convenções:
 
 ---
 
+> **Decisões do cliente (prevalecem sobre qualquer resolução/proposta abaixo que conflite):**
+> 1. **Mapa 2 (Arena):** não há linha de chegada; a rodada dura o tempo inteiro e **todos os que estiverem vivos ao fim do tempo avançam** (o corte pode ficar acima ou abaixo de 50%). Só encerra antes se restarem 2 ou menos.
+> 2. **Mapa 3 (Labirinto):** final de sobrevivência — **último de pé vence**. Cair na água elimina. Os anéis afundam de fora para dentro para garantir desfecho dentro do tempo; se o tempo acabar com mais de um vivo, vence quem estiver mais perto do centro.
+> 3. **Colisão entre jogadores:** fora da PoC.
+> 4. **Pinguim:** diferença apenas visual; mesma física do Ícaro.
+
 ## 1. Escopo
 
 ### 1.1 Dentro do escopo da PoC

@@ -27,11 +27,13 @@
 // PlayerInfo = { id, name, char, color, bot }   color = índice 0..15 na paleta de jogadores
 //
 // Regras de resultado (servidor), a partir do estado reportado / simulado:
-//  - corrida ('race'): map.finished(body) => 'qualified' até encher `cap`; rodada acaba quando as vagas
-//    enchem ou em timeLimit (quem não chegou: 'eliminated'). Na final, cap = 1 (vencedor); se o tempo acabar
-//    sem vencedor, vence o maior map.progress(body).
-//  - sobrevivência ('survival'): y < map.killY => 'eliminated'; rodada acaba quando vivos <= cap ou em
-//    timeLimit (se sobrarem mais que `cap`, desempate por maior distância percorrida).
+//  - corrida ('race'): map.finished(body) => 'qualified' até encher `cap` (metade dos participantes); a rodada
+//    acaba quando as vagas enchem ou em timeLimit (quem não chegou: 'eliminated').
+//  - sobrevivência ('survival'): y < map.killY => 'eliminated'. A rodada dura até timeLimit e TODOS os vivos
+//    se qualificam; só encerra antes se vivos <= cap (cap = map.minAlive: 2 na arena, 1 na final).
+//    Se todos caírem, qualificam-se os últimos a cair até completar `cap`.
+//  - final (última rodada, 'survival' com cap 1): vence o último de pé; se o tempo acabar com mais de um vivo,
+//    vence o maior map.progress(body) (mais perto do centro) e os demais ficam eliminados em ordem de progress.
 //  - desconexão durante a rodada => 'eliminated'.
 
 export const DEFAULT_PORT = 3001;
