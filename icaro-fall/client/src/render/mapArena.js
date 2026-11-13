@@ -144,7 +144,7 @@ export function createArenaMap(env) {
         band.visible = shrinking;
         if (shrinking) {
           const hz = R < 3 ? 4 : 2;
-          bandMat.opacity = 0.55 + 0.45 * Math.sign(Math.sin(time * Math.PI * 2 * hz));
+          bandMat.opacity = 0.7 + 0.3 * Math.sign(Math.sin(time * Math.PI * 2 * hz));
           if (fx && smooth && Math.random() < dt * 14) {
             const a = Math.random() * Math.PI * 2;
             fx.emit('bubbles', { x: Math.cos(a) * (R + 0.3), y: 0.1, z: Math.sin(a) * (R + 0.3) }, { n: 1, r: 0.2 });

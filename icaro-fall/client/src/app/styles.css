@@ -213,7 +213,7 @@ td.sit { white-space: nowrap; }
 .results-foot { margin-top: var(--sp-3); font-weight: 800; text-align: center; }
 
 .winner { display: grid; justify-items: center; gap: var(--sp-4); text-align: center; padding: var(--sp-4); max-width: 100%; }
-.winner-title { font-size: clamp(48px, 9vw, 120px); animation: enter 200ms var(--ease-in); overflow-wrap: anywhere; }
+.winner-title { font-size: clamp(40px, 7.5vw, 104px); animation: enter 200ms var(--ease-in); overflow-wrap: anywhere; }
 .winner-sub { background: var(--primary); color: var(--ink); border: 3px solid var(--ink); font: 800 22px/1.1 var(--font-display); }
 .podium { display: flex; align-items: flex-end; gap: var(--sp-2); margin-top: var(--sp-3); }
 .podium li { width: 150px; background: var(--paper); border: 4px solid var(--ink); border-bottom: 0; border-radius: var(--r-md) var(--r-md) 0 0; padding: var(--sp-3) var(--sp-2); display: grid; justify-items: center; gap: 4px; font-weight: 800; }

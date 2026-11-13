@@ -3,6 +3,7 @@
 //   n=16                         nº de personagens (alternando icaro/penguin, cores 0..15)
 //   pose=cycle|idle|run|air|dive|slide|stun|qualified|eliminated   (padrão cycle: cada um num estado, trocando a cada 2,5 s)
 //   t=<s>                        tempo de rodada fixo (sem t: avança a partir de t0, padrão −1)
+//                                ex. jets: t=45 aviso do anel externo, t=53 afundando, t=160 só o pódio; arena: t=30 avisos/submersões
 //   t0=<s>  speed=<x>            tempo inicial e escala de tempo
 //   cam=<id>                     segue o jogador id (sem cam: órbita de apresentação)
 //   yaw=<graus> pitch=<graus> dist=<m> fov=<graus> height=<m>   controle da câmera (arraste o mouse para girar)

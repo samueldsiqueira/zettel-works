@@ -113,7 +113,7 @@ export function createGame({ view, net, input, ui, lobbySpot }) {
     connectFails++;
     const wasJoined = G.joined || G.pendingJoin;
     G.myId = null; G.joined = false; G.pendingJoin = false; G.lobbyPlayers = [];
-    rejoin = wasJoined && !!profile.name;
+    rejoin = rejoin || (wasJoined && !!profile.name);
     if (G.round) ui.setConn('Conexão perdida. Reconectando…');
     enterLobby();
   });

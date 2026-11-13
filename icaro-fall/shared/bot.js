@@ -130,25 +130,7 @@ function thinkSlide(bot, b, map, world, inp, dt) {
 
 // ── Mapa 2: Arena ─────────────────────────────────────────────────────────────
 
-const SINK_T = 1.2; // igual ao de maps/arena.js (tempo de afundar/emergir)
 const FS = {}, FS2 = {};
-
-/** Segundos até a plataforma `f` começar a afundar, a partir de t (0 = já está afundando). */
-function floatSafeFor(f, t) {
-  const tt = Math.max(0, t);
-  const down = 2.5 + 6 * clamp(tt / 170, 0, 1);
-  const ph = (tt + f.phase) % f.period;
-  const startDown = f.period - down - SINK_T;
-  const next = f.period - ph + startDown; // início do afundamento no próximo ciclo
-  if (ph < startDown) {
-    const tau = startDown - ph;
-    if (tt + tau > 8) return tau;
-    return 8 - tt; // carência inicial: o ciclo só passa a valer em t = 8
-  }
-  if (ph > (startDown + f.period) / 2) return next; // já está emergindo (quem chama confere se está sólida)
-  if (tt > 8) return 0;
-  return ph + (8 - tt) < f.period ? 8 - tt : next;
-}
 
 function initArena(bot, map) {
   const { rng, skill: sk } = bot;
@@ -164,6 +146,7 @@ function initArena(bot, map) {
     pref: map.floats.map(() => rng() * 2.5), // gosto pessoal por plataforma (espalha os bots)
     land: 0.8 + (1 - sk) * 0.5, // folga de pouso em relação à borda do alvo
     plan: sk > 0.35, // consulta o plano de fuga em vez de só reagir
+    hold: sk > 0.75 ? 2 : 0, // cautela do plano: craques só contam com janelas de pulo folgadas
     horizon: 6 + sk * sk * 60, // quantos segundos à frente enxerga no plano
     reachK: 0.95 + (1 - sk) * 0.22 * rng(), // superestima o próprio pulo
     dwell: 2.0,
@@ -198,7 +181,7 @@ function thinkArena(bot, b, map, world, inp) {
   }
   if (M.target === sup) M.target = null; // chegou
 
-  const mySafe = onCenter ? 99 : floatSafeFor(sup, t);
+  const mySafe = onCenter ? 99 : floatSafeFor(arenaPlan(map), sup, t);
   const alert = onCenter ? t >= M.leaveT : M.plan || mySafe < M.react;
   if (!alert) M.target = null;
   else if (t >= M.nextPick) {
@@ -253,17 +236,20 @@ function thinkArena(bot, b, map, world, inp) {
 
 // Plano de fuga: como as plataformas são função pura do tempo, dá para calcular de trás para a frente,
 // uma vez por mapa, até quando é possível ficar seco estando na plataforma i no instante t_k
-// (ficando parado ou pulando para uma vizinha). Os bots que planejam consultam esta tabela.
+// (ficando parado ou pulando para uma vizinha). Os bots que planejam consultam esta tabela (L); todos
+// usam U (até quando cada plataforma fica sólida), o que evita duplicar aqui as constantes do mapa.
 const PLAN = new WeakMap();
 const PLAN_DT = 0.25, HOP_K = Math.round(JUMP_T / PLAN_DT);
 const PLAN_REACH = JUMP_REACH * 0.9, PLAN_LAND = 1.1; // folgas conservadoras: o plano precisa ser executável
 
-function arenaPlan(map) {
-  let P = PLAN.get(map);
+function arenaPlan(map, hold = 0) {
+  let byHold = PLAN.get(map);
+  if (!byHold) PLAN.set(map, byHold = []);
+  let P = byHold[hold];
   if (P) return P;
   const F = map.floats, n = F.length;
   const K = Math.ceil(map.timeLimit / PLAN_DT) + HOP_K + 2;
-  const solid = new Uint8Array(n * K), L = new Float32Array(n * K);
+  const solid = new Uint8Array(n * K), L = new Float32Array(n * K), U = new Float32Array(n * K);
   const px = new Float32Array(n * K), pz = new Float32Array(n * K);
   const lx = new Float32Array(n * K), lz = new Float32Array(n * K); // centro "lançado" (posição + velocidade * voo)
   const st = {};
@@ -274,6 +260,7 @@ function arenaPlan(map) {
   }
   for (let k = K - 1; k >= 0; k--) for (let i = 0; i < n; i++) {
     const q = i * K + k;
+    U[q] = solid[q] && k < K - 1 ? U[q + 1] : k * PLAN_DT; // até quando esta plataforma segue sólida
     if (!solid[q] || k === K - 1) { L[q] = k * PLAN_DT; continue; }
     let v = L[q + 1];
     const k2 = k + HOP_K;
@@ -282,12 +269,17 @@ function arenaPlan(map) {
       if (j === i || !solid[q2] || L[q2] <= v) continue;
       const lim = F[i].r - 0.45 + PLAN_REACH + F[j].r - PLAN_LAND;
       const dx = px[q2] - lx[q], dz = pz[q2] - lz[q];
-      if (dx * dx + dz * dz <= lim * lim) v = L[q2];
+      if (dx * dx + dz * dz > lim * lim) continue;
+      // plano cauteloso (hold > 0): a janela precisa durar, i.e. o mesmo pulo ainda é possível `hold` passos depois
+      const q3 = q + hold, q4 = q2 + hold;
+      if (k2 + hold >= K || !solid[q3] || !solid[q4]) continue;
+      const ex = px[q4] - lx[q3], ez = pz[q4] - lz[q3];
+      if (ex * ex + ez * ez <= lim * lim) v = L[q2];
     }
     L[q] = v;
   }
-  P = { L, K, index: new Map(F.map((f, i) => [f, i])) };
-  PLAN.set(map, P);
+  P = { L, U, K, index: new Map(F.map((f, i) => [f, i])) };
+  byHold[hold] = P;
   return P;
 }
 
@@ -297,6 +289,12 @@ function planUntil(P, f, t) {
   return P.L[P.index.get(f) * P.K + k];
 }
 
+/** Segundos até a plataforma `f` deixar de ser sólida, a partir de t (0 = já afundou). */
+function floatSafeFor(P, f, t) {
+  const k = clamp(Math.ceil(t / PLAN_DT), 0, P.K - 1);
+  return Math.max(0, P.U[P.index.get(f) * P.K + k] - t);
+}
+
 /** Escolhe a plataforma para onde pular agora (alcançável, com previsão de órbita), ou null para ficar.
  *  Quem planeja (M.plan) compara "até quando sobrevivo" pelo plano, limitado ao seu horizonte de visão;
  *  os demais só olham quanto tempo a plataforma vizinha ainda fica à tona. */
@@ -304,7 +302,7 @@ function pickFloat(M, b, map, t, sup, cx, cz, cvx, cvz, supR, mySafe) {
   let best = null, bestScore = -Infinity, worst = null, worstGap = Infinity;
   const tl = t + 0.3 + JUMP_T;
   const maxReach = JUMP_REACH * M.reachK;
-  const P = M.plan ? arenaPlan(map) : null;
+  const T = arenaPlan(map, M.hold), P = M.plan ? T : null;
   const see = (until) => Math.min(until - t, M.horizon);
   // valor de ficar onde estou. Quem planeja compara com o plano atual (`now`) e com o que sobra dele
   // se esperar mais um pouco (`later`): pula cedo para plataformas que duram mais, e pula de qualquer
@@ -327,7 +325,7 @@ function pickFloat(M, b, map, t, sup, cx, cz, cvx, cvz, supR, mySafe) {
     const gap = Math.hypot(dx, dz) - (supR - 0.45) - (maxReach + c.r - M.land); // <= 0: alcançável
     if (gap < worstGap) { worstGap = gap; worst = c; }
     if (gap > (sup ? 0 : 1.0)) continue;
-    const sf = floatSafeFor(c, tl + eta);
+    const sf = floatSafeFor(T, c, tl + eta);
     if (sf < (P ? 0.6 : M.dwell) + eta) continue; // o plano pode usar plataformas-ponte de vida curta
     const val = P ? see(planUntil(P, c, tl + eta)) : sf;
     if (val <= stay + 0.01) continue; // só troca por coisa melhor
