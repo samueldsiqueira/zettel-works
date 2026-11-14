@@ -8,7 +8,7 @@ process.env.VITE_OFFLINE = '1';
 const out = path.resolve('dist-artifact');
 const res = await build({
   root: 'client', logLevel: 'warn',
-  build: { outDir: path.join(out, 'tmp'), emptyOutDir: true, write: false, cssCodeSplit: false,
+  build: { outDir: path.join(out, 'tmp'), emptyOutDir: true, write: false, cssCodeSplit: false, assetsInlineLimit: 1e9,
     rollupOptions: { output: { inlineDynamicImports: true } } },
 });
 const output = (Array.isArray(res) ? res[0] : res).output;

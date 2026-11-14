@@ -26,15 +26,24 @@ export { cameraBasis, CAMERA_DEFAULTS, LOBBY, PLAYER_COLORS };
 const MAP_FACTORY = { slide: createSlideMap, arena: createArenaMap, jets: createJetsMap };
 const G = {};
 
-export function createGameView(canvas) {
+/**
+ * opts (opcional): { shadows = true (shadow map do sol; false => sombras blob baratas), models = true (GLB; false => só procedural) }
+ */
+export function createGameView(canvas, opts = {}) {
+  const useShadows = opts.shadows !== false, useModels = opts.models !== false;
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
   renderer.outputColorSpace = THREE.SRGBColorSpace;
+  renderer.toneMapping = THREE.NeutralToneMapping; // preserva as cores saturadas da paleta, só comprime os realces
+  renderer.toneMappingExposure = 1.0;
+  renderer.shadowMap.enabled = useShadows;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   const scene = new THREE.Scene();
   const camera = new THREE.PerspectiveCamera(60, 16 / 9, 0.1, 800);
   camera.position.set(0, 6, -12);
 
-  const env = createEnvironment(scene);
+  const env = createEnvironment(scene, { shadows: useShadows });
+  env.buildEnvironment(renderer);
   const fx = createEffects(scene);
   const rig = createCameraRig(camera);
   const players = new Map();
@@ -54,6 +63,14 @@ export function createGameView(canvas) {
       fx.clear();
       const make = MAP_FACTORY[mapId] || createLobbyMap;
       stage = make(env);
+      // cenário recebe e projeta sombra (menos camadas transparentes/overlays)
+      stage.group.traverse((o) => {
+        if (!o.isMesh) return;
+        const m = o.material;
+        const solid = m && !m.transparent && !m.isMeshBasicMaterial;
+        o.receiveShadow = !!(m && !m.isMeshBasicMaterial);
+        o.castShadow = !!solid;
+      });
       scene.add(stage.group);
       rig.had = false;
     },
@@ -61,7 +78,7 @@ export function createGameView(canvas) {
     addPlayer(p) {
       if (!p || p.id == null) return;
       if (players.has(p.id)) view.removePlayer(p.id);
-      const ch = createCharacter(p);
+      const ch = createCharacter(p, useModels);
       players.set(p.id, ch);
       playerLayer.add(ch.holder);
     },
@@ -69,6 +86,8 @@ export function createGameView(canvas) {
       const ch = players.get(id);
       if (!ch) return;
       playerLayer.remove(ch.holder);
+      ch.dead = true;
+      if (ch.model) ch.model.mixer.stopAllAction();
       disposeTree(ch.holder);
       ch.badge.material.map.dispose();
       players.delete(id); trail.delete(id);
@@ -117,7 +136,7 @@ export function createGameView(canvas) {
         const g = stage.groundAt(ch.x, ch.z, ch.y + 0.3, roundT, G);
         updateCharacter(ch, dt, time, g, fx, camera.position);
         if (!ch.gone) {
-          if (g && g.y > stage.waterY - 0.2) fx.blob(ch.x, ch.z, g, Math.max(0, ch.y - g.y), ch.mode === 'slide' || ch.mode === 'dive' ? 1.3 : 1);
+          if (!useShadows && g && g.y > stage.waterY - 0.2) fx.blob(ch.x, ch.z, g, Math.max(0, ch.y - g.y), ch.mode === 'slide' || ch.mode === 'dive' ? 1.3 : 1);
           // rastro do deslize
           if (ch.mode === 'slide' && ch.speed > 3) {
             const acc = (trail.get(ch.id) || 0) + dt;
@@ -134,6 +153,14 @@ export function createGameView(canvas) {
 
       const target = cam.targetId != null ? players.get(cam.targetId) : null;
       rig.update(dt, time, roundT, target && target.hasState ? target : null, cam, stage);
+      // frustum de sombra: justo à frente do alvo; na órbita de apresentação cobre o mapa (mais largo, mais suave)
+      if (target && target.hasState) {
+        const b = cameraBasis(rig.yaw);
+        env.updateShadow(rig.tx + b.forward.x * 9, rig.ty, rig.tz + b.forward.z * 9, 30);
+      } else {
+        const p = stage.present;
+        env.updateShadow(p.x, p.y, p.z, Math.max(18, p.radius * 1.15));
+      }
       env.update(time, camera);
     },
 

@@ -3,6 +3,7 @@
 import * as THREE from 'three';
 import { C, playerColor, shade, vcToon, inkHull, symbolTexture, badgeTexture, arrowTexture, own } from './palette.js';
 import { Builder, DEG } from './geo.js';
+import { loadModel, instantiateModel } from './models.js';
 
 const PIVOT_Y = 0.8;
 const SKIN = '#F2B48A', HAIR = '#C9792B', BAND = '#FFC83D', FEATHER = '#FFF8E7', SLIPPER = '#FF7A1A', CHEEK = '#FF9C8A';
@@ -212,7 +213,33 @@ function targetPose(ch, T, mode, time) {
 const _starGeo = new THREE.OctahedronGeometry(0.07);
 const _starMat = new THREE.MeshBasicMaterial({ color: '#FFD23F' });
 
-export function createCharacter({ id, name, char, color, isLocal }) {
+const CLIP_FOR = { idle: 'Idle', run: 'Run', air: 'Jump', dive: 'Dive', slide: 'Slide', celebrate: 'Celebrate' };
+
+function attachModel(ch, base) {
+  const m = ch.model = instantiateModel(base, ch.slot);
+  ch.root.add(m.root);
+  ch.procedural.visible = false;
+  ch.root.add(ch.stars); // estrelas de tontura passam a orbitar acima da cabeça do modelo
+  ch.stars.position.y = ch.char === 'icaro' ? 1.78 : 1.7;
+  ch.action = null;
+}
+
+/** Escolhe o clipe do estado (ausente => Idle) e faz crossfade de 0,12 s. */
+function driveModel(ch, mode, dt) {
+  const m = ch.model;
+  let name = ch.stunT >= 0 ? 'Stun' : CLIP_FOR[mode] || 'Idle';
+  if (!m.actions[name]) name = 'Idle';
+  const next = m.actions[name];
+  if (next && next !== ch.action) {
+    next.reset(); next.enabled = true; next.setEffectiveWeight(1); next.play();
+    if (ch.action) ch.action.crossFadeTo(next, 0.12, false); else next.fadeIn(0);
+    ch.action = next; ch.clip = name;
+  }
+  if (ch.action) ch.action.timeScale = name === 'Run' ? Math.min(2.2, Math.max(0.35, ch.speed / 7)) : 1;
+  m.mixer.update(dt);
+}
+
+export function createCharacter({ id, name, char, color, isLocal }, useModels = true) {
   const ch = {
     id, char: char === 'penguin' ? 'penguin' : 'icaro', slot: color | 0, isLocal: !!isLocal,
     seed: Math.random() * 10, runPhase: 0, stunT: -1, flail: false,
@@ -243,19 +270,25 @@ export function createCharacter({ id, name, char, color, isLocal }) {
 
   // crachá
   const bt = badgeTexture(isLocal ? 'Você' : name, ch.slot);
-  const badge = ch.badge = new THREE.Sprite(own(new THREE.SpriteMaterial({ map: bt.texture, transparent: true, depthWrite: false, fog: false })));
+  const badge = ch.badge = new THREE.Sprite(own(new THREE.SpriteMaterial({ map: bt.texture, transparent: true, depthWrite: false, fog: false, toneMapped: false })));
   ch.badgeH = 0.36; ch.badgeAspect = bt.aspect;
   badge.scale.set(ch.badgeH * bt.aspect, ch.badgeH, 1);
   badge.position.y = 2.0;
   badge.renderOrder = 10;
   holder.add(badge);
   if (isLocal) {
-    const ar = ch.arrow = new THREE.Sprite(own(new THREE.SpriteMaterial({ map: arrowTexture(), transparent: true, depthWrite: false, fog: false })));
+    const ar = ch.arrow = new THREE.Sprite(own(new THREE.SpriteMaterial({ map: arrowTexture(), transparent: true, depthWrite: false, fog: false, toneMapped: false })));
     ar.scale.set(0.28, 0.28, 1);
     ar.renderOrder = 10;
     holder.add(ar);
   }
   holder.visible = false; // até o primeiro setPlayerState
+
+  // fallback procedural projeta sombra; o GLB (se existir) substitui quando terminar de carregar
+  ch.procedural = body;
+  body.traverse((o) => { if (o.isMesh && o.material.side !== THREE.BackSide) o.castShadow = true; });
+  ch.model = null; ch.action = null; ch.dead = false;
+  if (useModels) loadModel(ch.char).then((base) => { if (base && !ch.dead) attachModel(ch, base); });
   return ch;
 }
 
@@ -342,25 +375,31 @@ export function updateCharacter(ch, dt, time, ground, fx, camPos) {
     if (n % 2 === 1) spin = f * TAU;
   }
 
-  const body = N.body;
-  body.position.y = PIVOT_Y + P.bodyY;
-  body.rotation.set(P.bodyRx * DEG, P.bodyRy * DEG, P.bodyRz * DEG);
-  body.scale.set(sx, sy, sx);
-  N.head.rotation.set(P.headRx * DEG, 0, P.headRz * DEG);
-  N.armL.rotation.set(-P.armL * DEG, 0, P.armOut * DEG);
-  N.armR.rotation.set(-P.armR * DEG, 0, -P.armOut * DEG);
-  N.legL.rotation.x = -P.legL * DEG; N.legR.rotation.x = -P.legR * DEG;
-  N.legL.position.y = ch.legBaseY + P.liftL; N.legR.position.y = ch.legBaseY + P.liftR;
-  if (N.wingL) { N.wingL.rotation.z = -P.wing * DEG; N.wingR.rotation.z = P.wing * DEG; }
+  if (ch.model) {
+    driveModel(ch, mode, dt);
+    ch.model.root.scale.set(sx, sy / (P.sy || 1), sx);
+    if (ch.clip === 'Celebrate') { hop = 0; spin = 0; } // o clipe já tem os pulinhos
+  } else {
+    const body = N.body;
+    body.position.y = PIVOT_Y + P.bodyY;
+    body.rotation.set(P.bodyRx * DEG, P.bodyRy * DEG, P.bodyRz * DEG);
+    body.scale.set(sx, sy, sx);
+    N.head.rotation.set(P.headRx * DEG, 0, P.headRz * DEG);
+    N.armL.rotation.set(-P.armL * DEG, 0, P.armOut * DEG);
+    N.armR.rotation.set(-P.armR * DEG, 0, -P.armOut * DEG);
+    N.legL.rotation.x = -P.legL * DEG; N.legR.rotation.x = -P.legR * DEG;
+    N.legL.position.y = ch.legBaseY + P.liftL; N.legR.position.y = ch.legBaseY + P.liftR;
+    if (N.wingL) { N.wingL.rotation.z = -P.wing * DEG; N.wingR.rotation.z = P.wing * DEG; }
 
-  // piscar
-  ch.blinkT -= dt;
-  let ey = 1;
-  if (ch.blinkT < 0) {
-    const u = -ch.blinkT / 0.12;
-    if (u >= 1) ch.blinkT = 3 + Math.random() * 2; else ey = 1 - 0.9 * Math.sin(u * Math.PI);
+    // piscar
+    ch.blinkT -= dt;
+    let ey = 1;
+    if (ch.blinkT < 0) {
+      const u = -ch.blinkT / 0.12;
+      if (u >= 1) ch.blinkT = 3 + Math.random() * 2; else ey = 1 - 0.9 * Math.sin(u * Math.PI);
+    }
+    N.eyes.scale.y = ey;
   }
-  N.eyes.scale.y = ey;
 
   // estrelas
   const st = ch.stars;

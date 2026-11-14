@@ -246,7 +246,7 @@ export function textTexture(text, { w = 1024, h = 128, bg = C.ink, fg = '#fff' }
 /** Descarta geometrias/materiais/texturas de uma subárvore (materiais do cache são recriados sob demanda na GPU). */
 export function disposeTree(root) {
   root.traverse((o) => {
-    if (o.geometry) o.geometry.dispose();
+    if (o.geometry && !o.userData.sharedGeo) o.geometry.dispose();
     const ms = o.material ? (Array.isArray(o.material) ? o.material : [o.material]) : [];
     for (const m of ms) {
       if (m.userData && m.userData.own) {

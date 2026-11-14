@@ -11,6 +11,7 @@
 //   r=<m>                        (arena/jets) raio do círculo onde os personagens ficam
 //   ev=<tipo>                    emite view.emit(tipo) a cada 1,2 s em cada personagem
 //   pop=1                        (slide) estoura boias em sequência
+//   shadows=0 models=0           desliga shadow map (usa blob) / modelos GLB (usa procedural)
 //   hud=0                        esconde o painel de info
 import { createGameView, LOBBY } from './render/index.js';
 import { MAP_BY_ID } from '../../shared/maps/index.js';
@@ -24,7 +25,7 @@ const poseMode = q.get('pose') || 'cycle';
 const DEG = Math.PI / 180;
 
 const canvas = document.getElementById('c');
-const view = createGameView(canvas);
+const view = createGameView(canvas, { shadows: q.get('shadows') !== '0', models: q.get('models') !== '0' });
 view.loadMap(mapId);
 view.setPlayerState('ninguem', { x: 0, y: 0, z: 0 }); // id desconhecido: deve ser ignorado
 view.popBuoy(9999); view.emit('inexistente', { x: 0, y: 0, z: 0 }); view.emit('splash', null);

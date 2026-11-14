@@ -133,7 +133,8 @@ export function createSlideMap(env) {
     const base = SECTOR[sectorOf(s)];
     return j === 0 || j === 11 ? tint(base, 0.35) : base;
   });
-  const track = new THREE.Mesh(trackGeo, vcToon());
+  // pista molhada: Standard liso (especular do sol + reflexo do céu via scene.environment)
+  const track = new THREE.Mesh(trackGeo, own(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.3, metalness: 0, envMapIntensity: 1.2 })));
   group.add(track);
 
   // casco externo + lábio arredondado (tubo branco raio 0,25 na borda)
