@@ -10,12 +10,34 @@ import sys
 import bpy
 from mathutils import Euler, Matrix, Vector
 
-ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
-OUT_GLB = os.path.join(ROOT, 'assets', 'models', 'icaro.glb')
-OUT_ART = os.path.join(ROOT, 'docs', 'arte')
-RENDER = '--no-render' not in sys.argv
+# Dentro do Blender (aba Scripting > Run Script) não há __file__ de verdade nem modo background:
+# nesse caso a cena atual é limpa (sem reiniciar o Blender), não se renderiza, e o .glb vai para
+# a pasta do .blend salvo ou, se não houver, para ~/icaro-fall-out.
+IN_UI = not bpy.app.background or os.environ.get('ICARO_FORCE_UI') == '1'
+_here = globals().get('__file__', '')
+if os.path.isfile(_here) and not IN_UI:
+    ROOT = os.path.abspath(os.path.join(os.path.dirname(_here), '..', '..'))
+    OUT_GLB = os.path.join(ROOT, 'assets', 'models', 'icaro.glb')
+    OUT_ART = os.path.join(ROOT, 'docs', 'arte')
+else:
+    ROOT = bpy.path.abspath('//') if bpy.data.filepath else os.path.join(os.path.expanduser('~'), 'icaro-fall-out')
+    OUT_GLB = os.path.join(ROOT, 'icaro.glb')
+    OUT_ART = os.path.join(ROOT, 'arte')
+RENDER = '--no-render' not in sys.argv and not IN_UI
 
-bpy.ops.wm.read_factory_settings(use_empty=True)
+if IN_UI:
+    # read_factory_settings invalida o contexto da interface (os operadores passam a falhar no poll),
+    # então só esvaziamos a cena atual.
+    if bpy.context.object and bpy.context.object.mode != 'OBJECT':
+        bpy.ops.object.mode_set(mode='OBJECT')
+    for o in list(bpy.data.objects):
+        bpy.data.objects.remove(o, do_unlink=True)
+    for coll in (bpy.data.meshes, bpy.data.armatures, bpy.data.materials, bpy.data.actions, bpy.data.lights, bpy.data.cameras):
+        for d in list(coll):
+            if d.users == 0:
+                coll.remove(d)
+else:
+    bpy.ops.wm.read_factory_settings(use_empty=True)
 scene = bpy.context.scene
 col = scene.collection
 
@@ -123,9 +145,14 @@ for i, j in enumerate(J):
     v.use_root = i == 0
 sub = body.modifiers.new('Sub', 'SUBSURF')
 sub.levels = 2
-bpy.ops.object.modifier_apply(modifier='Skin')
-bpy.ops.object.modifier_apply(modifier='Sub')
-bpy.ops.object.shade_smooth()
+baked = bpy.data.meshes.new_from_object(body.evaluated_get(bpy.context.evaluated_depsgraph_get()))
+body.modifiers.clear()
+body.data = baked
+bpy.data.meshes.remove(me)
+me = baked
+me.name = 'Icaro'
+for p in me.polygons:
+    p.use_smooth = True
 import bmesh  # noqa: E402
 bm = bmesh.new()
 bm.from_mesh(me)
@@ -345,64 +372,70 @@ bpy.ops.export_scene.gltf(filepath=OUT_GLB, export_format='GLB', use_selection=T
                           export_apply=False)
 print(f'[icaro] exportado {OUT_GLB} ({os.path.getsize(OUT_GLB) / 1024:.0f} KB)')
 
-if not RENDER:
-    raise SystemExit(0)
+if IN_UI:
+    # deixa a animação Idle visível ao dar play (troque a faixa ativa no editor NLA para ver a corrida)
+    for tr in arm.animation_data.nla_tracks:
+        tr.mute = tr.name != 'Idle'
+    scene.frame_start, scene.frame_end = 1, 48
+    scene.frame_set(1)
+print(f'[icaro] pronto: {OUT_GLB}')
 
-# ── Folha de modelo (Cycles, CPU) ────────────────────────────────────────────
-for tr in arm.animation_data.nla_tracks:
-    tr.mute = True
-scene.render.engine = 'CYCLES'
-scene.cycles.samples = 64
-scene.cycles.use_denoising = True
-scene.render.resolution_x, scene.render.resolution_y = 560, 720
-scene.view_settings.view_transform = 'Standard'
-scene.render.film_transparent = False
-world = bpy.data.worlds.new('W')
-world.use_nodes = True
-world.node_tree.nodes['Background'].inputs[0].default_value = (*srgb('#8FD3F4'), 1)
-world.node_tree.nodes['Background'].inputs[1].default_value = 0.45
-scene.world = world
-bpy.ops.mesh.primitive_plane_add(size=60, location=(0, 0, 0))
-floor = bpy.context.object
-floor.data.materials.append(mat('Chao', srgb('#3FB7D9'), 0.9))
-
-
-def light(kind, loc, energy, size=4.0, color=(1, 1, 1)):
-    d = bpy.data.lights.new(kind, kind)
-    d.energy = energy
-    d.color = color
-    if kind == 'AREA':
-        d.size = size
-    else:
-        d.angle = math.radians(8)
-    o = bpy.data.objects.new(kind, d)
-    o.location = loc
-    col.objects.link(o)
-    o.rotation_euler = (Vector((0, 0, 0.9)) - Vector(loc)).to_track_quat('-Z', 'Y').to_euler()
-    return o
+if RENDER:
+    # ── Folha de modelo (Cycles, CPU) ────────────────────────────────────────────
+    for tr in arm.animation_data.nla_tracks:
+        tr.mute = True
+    scene.render.engine = 'CYCLES'
+    scene.cycles.samples = 64
+    scene.cycles.use_denoising = True
+    scene.render.resolution_x, scene.render.resolution_y = 560, 720
+    scene.view_settings.view_transform = 'Standard'
+    scene.render.film_transparent = False
+    world = bpy.data.worlds.new('W')
+    world.use_nodes = True
+    world.node_tree.nodes['Background'].inputs[0].default_value = (*srgb('#8FD3F4'), 1)
+    world.node_tree.nodes['Background'].inputs[1].default_value = 0.45
+    scene.world = world
+    bpy.ops.mesh.primitive_plane_add(size=60, location=(0, 0, 0))
+    floor = bpy.context.object
+    floor.data.materials.append(mat('Chao', srgb('#3FB7D9'), 0.9))
 
 
-light('SUN', (-3, -5, 7), 2.3, color=(1.0, 0.96, 0.9))
-light('AREA', (4, -4, 2.5), 90, 5, (0.85, 0.93, 1.0))
-light('AREA', (1.5, 5, 3.5), 300, 3, (1.0, 0.95, 0.85))  # contraluz
-cam_d = bpy.data.cameras.new('Cam')
-cam_d.lens = 70
-cam = bpy.data.objects.new('Cam', cam_d)
-col.objects.link(cam)
-scene.camera = cam
-cam.location = (0, -4.3, 1.15)
-cam.rotation_euler = (Vector((0, 0, 0.84)) - cam.location).to_track_quat('-Z', 'Y').to_euler()
+    def light(kind, loc, energy, size=4.0, color=(1, 1, 1)):
+        d = bpy.data.lights.new(kind, kind)
+        d.energy = energy
+        d.color = color
+        if kind == 'AREA':
+            d.size = size
+        else:
+            d.angle = math.radians(8)
+        o = bpy.data.objects.new(kind, d)
+        o.location = loc
+        col.objects.link(o)
+        o.rotation_euler = (Vector((0, 0, 0.9)) - Vector(loc)).to_track_quat('-Z', 'Y').to_euler()
+        return o
 
-os.makedirs(OUT_ART, exist_ok=True)
-SHOTS = [  # nome, animação, fase (fração do ciclo), giro do personagem em graus (0 = frente)
-    ('1-frente', 'Idle', 0.0, 0), ('2-lado', 'Idle', 0.0, 90), ('3-costas', 'Idle', 0.0, 180),
-    ('4-idle', 'Idle', 0.25, 30), ('5-corrida-a', 'Run', 0.25, 65), ('6-corrida-b', 'Run', 0.75, 65),
-    ('7-corrida-frente', 'Run', 0.25, 20),
-]
-for name, anim, frac, turn in SHOTS:
-    ACTIONS[anim][2](2 * math.pi * frac)
-    arm.rotation_euler = (0, 0, math.radians(turn))
-    bpy.context.view_layer.update()
-    scene.render.filepath = os.path.join(OUT_ART, f'icaro-{name}.png')
-    bpy.ops.render.render(write_still=True)
-    print('[icaro] render', name)
+
+    light('SUN', (-3, -5, 7), 2.3, color=(1.0, 0.96, 0.9))
+    light('AREA', (4, -4, 2.5), 90, 5, (0.85, 0.93, 1.0))
+    light('AREA', (1.5, 5, 3.5), 300, 3, (1.0, 0.95, 0.85))  # contraluz
+    cam_d = bpy.data.cameras.new('Cam')
+    cam_d.lens = 70
+    cam = bpy.data.objects.new('Cam', cam_d)
+    col.objects.link(cam)
+    scene.camera = cam
+    cam.location = (0, -4.3, 1.15)
+    cam.rotation_euler = (Vector((0, 0, 0.84)) - cam.location).to_track_quat('-Z', 'Y').to_euler()
+
+    os.makedirs(OUT_ART, exist_ok=True)
+    SHOTS = [  # nome, animação, fase (fração do ciclo), giro do personagem em graus (0 = frente)
+        ('1-frente', 'Idle', 0.0, 0), ('2-lado', 'Idle', 0.0, 90), ('3-costas', 'Idle', 0.0, 180),
+        ('4-idle', 'Idle', 0.25, 30), ('5-corrida-a', 'Run', 0.25, 65), ('6-corrida-b', 'Run', 0.75, 65),
+        ('7-corrida-frente', 'Run', 0.25, 20),
+    ]
+    for name, anim, frac, turn in SHOTS:
+        ACTIONS[anim][2](2 * math.pi * frac)
+        arm.rotation_euler = (0, 0, math.radians(turn))
+        bpy.context.view_layer.update()
+        scene.render.filepath = os.path.join(OUT_ART, f'icaro-{name}.png')
+        bpy.ops.render.render(write_still=True)
+        print('[icaro] render', name)
