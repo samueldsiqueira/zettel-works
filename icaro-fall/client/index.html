@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#2FA8F5" />
+  <title>Ícaro Fall</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@600;800&family=Nunito:wght@600;800&display=swap" rel="stylesheet" />
+</head>
+<body>
+  <canvas id="game" tabindex="-1" aria-label="Cena do jogo"></canvas>
+
+  <div id="ui">
+    <!-- ───────────── Título / lobby ───────────── -->
+    <main id="screen-lobby" class="screen" hidden>
+      <div class="lobby-col">
+        <header class="logo-block">
+          <h1 class="logo hero-text">ÍCARO <span>FALL</span></h1>
+          <p class="tagline">Corra, mergulhe e não caia na água!</p>
+        </header>
+
+        <section class="panel lobby-panel" aria-label="Entrar na partida">
+          <form id="join-form" novalidate>
+            <div class="field">
+              <label for="name-input">Seu nome</label>
+              <input id="name-input" type="text" maxlength="14" autocomplete="off" spellcheck="false"
+                     placeholder="Digite seu apelido" aria-describedby="name-error" />
+              <p id="name-error" class="field-error" role="alert" hidden>Escolha um nome com 2 a 14 caracteres.</p>
+            </div>
+
+            <fieldset class="chars">
+              <legend>Personagem</legend>
+              <div class="char-row" role="radiogroup" aria-label="Personagem">
+                <button type="button" class="char-card" data-char="icaro" role="radio" aria-checked="true">
+                  <svg viewBox="0 0 100 100" aria-hidden="true">
+                    <ellipse cx="22" cy="60" rx="9" ry="20" fill="#FFF8E7" stroke="#1B2140" stroke-width="3" transform="rotate(-28 22 60)"/>
+                    <ellipse cx="78" cy="60" rx="9" ry="20" fill="#FFF8E7" stroke="#1B2140" stroke-width="3" transform="rotate(28 78 60)"/>
+                    <rect x="34" y="56" width="32" height="30" rx="12" fill="#E53935" stroke="#1B2140" stroke-width="3"/>
+                    <circle cx="50" cy="36" r="24" fill="#F2B48A" stroke="#1B2140" stroke-width="3"/>
+                    <path d="M27 31c2-17 14-22 23-22s21 5 23 22c-9-7-18-9-23-9s-14 2-23 9z" fill="#C9792B" stroke="#1B2140" stroke-width="3" stroke-linejoin="round"/>
+                    <path d="M28 30c8-6 36-6 44 0" fill="none" stroke="#FFC83D" stroke-width="4" stroke-linecap="round"/>
+                    <ellipse cx="42" cy="40" rx="3" ry="4.5" fill="#1B2140"/><ellipse cx="58" cy="40" rx="3" ry="4.5" fill="#1B2140"/>
+                    <circle cx="35" cy="47" r="3.5" fill="#FF9C8A"/><circle cx="65" cy="47" r="3.5" fill="#FF9C8A"/>
+                    <path d="M45 48q5 5 10 0" fill="none" stroke="#1B2140" stroke-width="2.5" stroke-linecap="round"/>
+                  </svg>
+                  <span class="char-name">Ícaro</span>
+                  <span class="char-sel"><span aria-hidden="true">✓</span> Selecionado</span>
+                </button>
+                <button type="button" class="char-card" data-char="penguin" role="radio" aria-checked="false">
+                  <svg viewBox="0 0 100 100" aria-hidden="true">
+                    <ellipse cx="20" cy="62" rx="7" ry="17" fill="#1E63E9" stroke="#1B2140" stroke-width="3" transform="rotate(20 20 62)"/>
+                    <ellipse cx="80" cy="62" rx="7" ry="17" fill="#1E63E9" stroke="#1B2140" stroke-width="3" transform="rotate(-20 80 62)"/>
+                    <ellipse cx="50" cy="62" rx="27" ry="30" fill="#1E63E9" stroke="#1B2140" stroke-width="3"/>
+                    <ellipse cx="50" cy="68" rx="18" ry="22" fill="#fff"/>
+                    <circle cx="50" cy="32" r="22" fill="#1E63E9" stroke="#1B2140" stroke-width="3"/>
+                    <ellipse cx="50" cy="37" rx="15" ry="12" fill="#fff"/>
+                    <ellipse cx="43" cy="33" rx="3" ry="4.5" fill="#1B2140"/><ellipse cx="57" cy="33" rx="3" ry="4.5" fill="#1B2140"/>
+                    <path d="M44 40h12l-6 8z" fill="#FF9A1F" stroke="#1B2140" stroke-width="2.5" stroke-linejoin="round"/>
+                    <circle cx="41" cy="16" r="6" fill="#7FE3FF" stroke="#fff" stroke-width="3"/><circle cx="59" cy="16" r="6" fill="#7FE3FF" stroke="#fff" stroke-width="3"/>
+                    <ellipse cx="38" cy="93" rx="9" ry="4" fill="#FF9A1F" stroke="#1B2140" stroke-width="2.5"/><ellipse cx="62" cy="93" rx="9" ry="4" fill="#FF9A1F" stroke="#1B2140" stroke-width="2.5"/>
+                  </svg>
+                  <span class="char-name">Pinguim</span>
+                  <span class="char-sel"><span aria-hidden="true">✓</span> Selecionado</span>
+                </button>
+              </div>
+            </fieldset>
+
+            <p id="my-color" class="my-color" hidden>Sua cor <span class="chip" id="my-chip"></span> <span id="my-color-name"></span></p>
+
+            <div class="actions">
+              <button id="btn-join" type="button" class="btn btn-primary">Entrar na partida</button>
+              <button id="btn-start" type="button" class="btn btn-primary" hidden>Iniciar partida</button>
+              <p id="start-note" class="note" hidden>Vagas livres são completadas com bots.</p>
+            </div>
+          </form>
+
+          <p id="lobby-status" class="status" role="status" aria-live="polite">Conectando…</p>
+          <button id="btn-retry" type="button" class="btn btn-ghost" hidden>Tentar de novo</button>
+
+
+          <details class="howto">
+            <summary>Como jogar</summary>
+            <div class="controls-panel" id="howto-body"></div>
+            <label class="check"><input type="checkbox" id="opt-motion" /> Reduzir movimento</label>
+          </details>
+        </section>
+      </div>
+      <aside class="panel roster-panel">
+        <section class="roster" aria-labelledby="roster-title">
+          <h2 id="roster-title">Jogadores na sala (0/16)</h2>
+          <ul id="roster-list"></ul>
+          <p id="roster-empty" class="note">Ninguém na sala ainda. Entre e chame a galera!</p>
+        </section>
+      </aside>
+    </main>
+
+    <!-- ───────────── Jogo: HUD ───────────── -->
+    <div id="screen-game" class="screen" hidden>
+      <div class="hud-top">
+        <div class="pill hud-phase" id="hud-phase"><small id="hud-round">Fase 1/3</small><b id="hud-map">—</b></div>
+        <div class="pill hud-timer" id="hud-timer" role="timer" aria-label="Tempo restante">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="13" r="8" fill="none" stroke="currentColor" stroke-width="2.5"/><path d="M12 8.5V13l3 2M9.5 2.5h5" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/></svg>
+          <span id="hud-time">0:00</span>
+        </div>
+        <div class="hud-right">
+          <div class="pill hud-count" id="hud-count">—</div>
+          <ul class="feed" id="hud-feed" aria-live="polite"></ul>
+        </div>
+      </div>
+
+      <div class="intro" id="intro" hidden>
+        <p class="intro-round" id="intro-round">Fase 1 de 3</p>
+        <h2 class="intro-name hero-text" id="intro-name"></h2>
+        <p class="intro-goal" id="intro-goal"></p>
+        <p class="intro-watch" id="intro-watch" hidden></p>
+      </div>
+      <div class="countdown hero-text" id="countdown" aria-live="assertive" hidden></div>
+
+      <div class="banner" id="banner" role="status" aria-live="assertive" hidden>
+        <span class="banner-icon" id="banner-icon" aria-hidden="true"></span>
+        <div><strong id="banner-title"></strong><span id="banner-sub"></span></div>
+      </div>
+
+      <div class="toast pill" id="toast" hidden></div>
+
+      <div class="spectate" id="spectate" hidden>
+        <div class="spec-row">
+          <button type="button" class="spec-btn" id="spec-prev" aria-label="Jogador anterior">←</button>
+          <div class="pill spec-pill"><small id="spec-note">Assistindo a</small> <b id="spec-name">—</b></div>
+          <button type="button" class="spec-btn" id="spec-next" aria-label="Próximo jogador">→</button>
+        </div>
+        <p class="spec-hint pill" id="spec-hint">Clique ou use ← → para trocar de jogador</p>
+      </div>
+
+      <div class="hud-bottom">
+        <div class="hint" id="hint">
+          <div class="controls-panel pill-panel" id="hint-full"></div>
+          <div class="pill hint-min" id="hint-min"><kbd>Tab</kbd> controles</div>
+        </div>
+        <div class="progress" id="progress" hidden aria-hidden="true">
+          <div class="progress-track"><i id="progress-fill"></i><span id="progress-dot"></span><em>⚑</em></div>
+        </div>
+        <div class="pill speed" id="speed" hidden>
+          <span id="speed-state">Correndo</span>
+          <span class="speed-bar"><i id="speed-fill"></i></span>
+          <span id="speed-val">0</span><small>m/s</small>
+        </div>
+      </div>
+
+      <div class="pill lock-hint" id="lock-hint" hidden>Clique para jogar <small>· Esc solta o mouse</small></div>
+    </div>
+
+    <!-- ───────────── Placar da rodada ───────────── -->
+    <div id="screen-results" class="screen overlay" hidden>
+      <section class="panel results-panel" role="dialog" aria-labelledby="results-title">
+        <p class="results-kicker" id="results-kicker">Fim da rodada!</p>
+        <h2 id="results-title">Resultado</h2>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th scope="col">Posição</th><th scope="col">Jogador</th><th scope="col">Situação</th></tr></thead>
+            <tbody id="results-body"></tbody>
+          </table>
+        </div>
+        <p class="results-foot" id="results-foot" aria-live="polite"></p>
+      </section>
+    </div>
+
+    <!-- ───────────── Vencedor ───────────── -->
+    <div id="screen-winner" class="screen overlay" hidden>
+      <div class="winner">
+        <h2 class="hero-text winner-title" id="winner-title">VOCÊ VENCEU!</h2>
+        <p class="winner-sub pill">Campeão do Ícaro Fall</p>
+        <ol class="podium" id="podium"></ol>
+        <div class="winner-actions">
+          <button type="button" class="btn btn-primary" id="btn-again">Jogar de novo</button>
+        </div>
+        <p class="pill winner-foot" id="winner-foot" aria-live="polite"></p>
+      </div>
+    </div>
+
+    <div class="pill conn" id="conn" role="status" aria-live="polite" hidden></div>
+  </div>
+
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>
