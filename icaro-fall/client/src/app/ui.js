@@ -105,13 +105,17 @@ export function createUi() {
     return ok ? n : null;
   }
   el.name.addEventListener('input', () => { if (!el.nameErr.hidden) validName(); });
-  el.form.addEventListener('submit', (e) => {
-    e.preventDefault();
+  // Não depende do evento 'submit': em iframes isolados (sem allow-forms) o navegador bloqueia o envio
+  // antes de disparar o evento. O botão é type="button" e o Enter no campo é tratado à mão.
+  function submitJoin() {
     if (el.btnJoin.hidden) { if (!el.btnStart.disabled && cb.start) cb.start(); return; }
     const n = validName();
     if (!n) { el.name.focus(); return; }
     if (cb.join) cb.join(n, char);
-  });
+  }
+  el.form.addEventListener('submit', (e) => { e.preventDefault(); });
+  el.btnJoin.addEventListener('click', submitJoin);
+  el.name.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); submitJoin(); } });
   el.btnStart.addEventListener('click', () => cb.start && cb.start());
   el.btnRetry.addEventListener('click', () => cb.retry && cb.retry());
   el.btnAgain.addEventListener('click', () => cb.again && cb.again());

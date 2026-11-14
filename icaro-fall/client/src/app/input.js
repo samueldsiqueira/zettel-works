@@ -122,7 +122,8 @@ export function createInputManager(canvas) {
     return { x: ax * k, y: ay * k };
   }
   function poll(dt) {
-    const pads = navigator.getGamepads ? navigator.getGamepads() : [];
+    let pads = [];
+    try { pads = navigator.getGamepads ? navigator.getGamepads() : []; } catch { /* bloqueado por política do iframe */ }
     let pad = null;
     for (const p of pads) if (p && p.connected) { pad = p; break; }
     if (!pad) { padMove = { x: 0, y: 0 }; padPrev = []; return; }
